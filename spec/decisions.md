@@ -98,6 +98,34 @@ Run data stores media manifests/references; heavy generated binaries live in a c
 ## D32 — Reproducible benchmarks
 Canonical comparisons use multiple seeds and record model/checkpoint, quantization, sampling, harness, Jikko revision and context/tool budgets.
 
+
+## D33 — Jikko owns Git capability; AGame owns branch semantics
+Jikko provides generic Git operations in native and browser runtimes. It must not learn AGame concepts such as universes or save slots. AGame assigns meaning to those branches: **Jikko knows Git; AGame knows universes.**
+
+## D34 — One library repository, one universe per branch
+One Git repository represents the player's AGame library. Every independent game is a complete `universe/*` branch. This keeps the library easy to back up and permits branch-scoped selective synchronization. Branches are not reserved for alternate timelines.
+
+## D35 — Multiple games are first-class from Turn 0
+AGame has no implicit singleton save. New Game creates a new stable universe ID and a new universe branch, initializes complete state, and records a Turn 0 commit without changing existing universes.
+
+## D36 — OPFS is live state; remote Git is optional synchronization
+Browser gameplay uses OPFS immediately and remains fully usable offline. A remote Git provider is a synchronized durable replica/library, not the gameplay backend. Failed synchronization never invalidates a successful local turn.
+
+## D37 — Push atomic transactions, not individual file writes
+A completed turn/transaction and all associated authoritative/Jikko changes form one local commit. Only a successful local commit may be queued for push. This prevents remote half-turn states and gives meaningful history.
+
+## D38 — Selective universe synchronization
+A device may discover remote `universe/*` branches without downloading every universe. Only universes selected for play need to be fetched/materialized locally.
+
+## D39 — Divergent authoritative histories never auto-merge
+If two devices independently advance the same universe, the resulting authoritative world histories must not be content-merged automatically. AGame surfaces the divergence and lets the player retain one history or fork the other into a new universe branch while preserving Git ancestry.
+
+## D40 — Provider authentication stays outside Jikko source
+Jikko accepts provider-neutral Git authentication from its caller. AGame owns GitHub/provider login and credential lifecycle. Secrets never enter universe/Jikko source, commits, ZIP exports, or credential-bearing remote URLs.
+
+## D41 — ZIP remains an independent portability path
+Repository synchronization provides convenient continuous backup of the library. A universe ZIP remains the provider-independent single-universe export/import format.
+
 # Status
 
 **There are no unresolved v1 questions from the original pre-implementation list.**
