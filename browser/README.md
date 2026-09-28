@@ -18,4 +18,4 @@ The current GitHub connection UI accepts a credential for the browser session on
 
 ## Boundary
 
-AGame owns the `universe/*` convention and game-library UI. Generic OPFS/isomorphic-git behavior follows Jikko's browser Git adapter contract. Provider-specific authentication belongs at the AGame edge.
+AGame owns the `universe/*` convention and game-library UI. Generic OPFS/isomorphic-git behavior follows Jikko's browser Git adapter contract. GitHub backup vendors Jikko's `GitHubRemote` transport, which uses GitHub's Git Database REST API so the static app does not require a credential-bearing CORS proxy. Provider-specific authentication belongs at the AGame edge.
