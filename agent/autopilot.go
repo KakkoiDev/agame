@@ -24,7 +24,7 @@ func Autopilot(w *world.World, eid string) Decision {
 				return one("colonize",f.ID,target,nil,"Colonization fleet dispatched to "+target+".")
 			}
 		}
-		if f.Ships["frigate"]+f.Ships["cruiser"]>0 {
+		if f.Ships["frigate"]+f.Ships["cruiser"]>0 && hasOwnedPlanetAt(w,eid,f.SystemID) {
 			if target:=nearestEnemyPlanet(w,eid,f.SystemID);target!=""{
 				return one("attack",f.ID,target,nil,"Expeditionary fleet attacking "+target+".")
 			}
@@ -89,6 +89,7 @@ func human(s string)string{m:=map[string]string{"metal_mine":"Metal Mine","cryst
 func bestPlanet(ps []*world.Planet)*world.Planet{sort.Slice(ps,func(i,j int)bool{ai:=ps[i].Resources.Metal+ps[i].Resources.Crystal+ps[i].Resources.Deuterium;aj:=ps[j].Resources.Metal+ps[j].Resources.Crystal+ps[j].Resources.Deuterium;if ai==aj{return ps[i].ID<ps[j].ID};return ai>aj});return ps[0]}
 func ownedPlanets(w *world.World,eid string)[]*world.Planet{var out []*world.Planet;for _,p:=range w.Planets{if p.OwnerID==eid{out=append(out,p)}};sort.Slice(out,func(i,j int)bool{return out[i].ID<out[j].ID});return out}
 func ownedFleets(w *world.World,eid string)[]*world.Fleet{var out []*world.Fleet;for _,f:=range w.Fleets{if f.OwnerID==eid{out=append(out,f)}};sort.Slice(out,func(i,j int)bool{return out[i].ID<out[j].ID});return out}
+func hasOwnedPlanetAt(w *world.World,eid,system string)bool{for _,p:=range w.Planets{if p.OwnerID==eid&&p.SystemID==system{return true}};return false}
 func nearestEmptyPlanet(w *world.World,from string)string{return nearestPlanet(w,from,func(p *world.Planet)bool{return p.OwnerID==""})}
 func nearestEnemyPlanet(w *world.World,eid,from string)string{return nearestPlanet(w,from,func(p *world.Planet)bool{return p.OwnerID!=""&&p.OwnerID!=eid})}
 func nearestPlanet(w *world.World,from string,ok func(*world.Planet)bool)string{q:=[]string{from};seen:=map[string]bool{from:true};for len(q)>0{s:=q[0];q=q[1:];ids:=append([]string(nil),w.Systems[s].Planets...);sort.Strings(ids);for _,id:=range ids{if ok(w.Planets[id]){return id}};ns:=append([]string(nil),w.Systems[s].Neighbors...);sort.Strings(ns);for _,n:=range ns{if !seen[n]{seen[n]=true;q=append(q,n)}}};return ""}
