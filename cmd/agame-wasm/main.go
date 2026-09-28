@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"syscall/js"
 
+	"github.com/KakkoiDev/agame/agent"
 	"github.com/KakkoiDev/agame/world"
 )
 
@@ -16,6 +17,7 @@ func main() {
 	api := js.Global().Get("Object").New()
 	api.Set("newUniverse", js.FuncOf(newUniverse))
 	api.Set("advanceTurn", js.FuncOf(advanceTurn))
+	api.Set("autoTurn", js.FuncOf(autoTurn))
 	api.Set("summary", js.FuncOf(summary))
 	js.Global().Set("AGameWASM", api)
 	select {}
@@ -31,6 +33,34 @@ func newUniverse(_ js.Value, args []js.Value) any {
 		return fail(err)
 	}
 	return encode(w)
+}
+
+
+func autoTurn(_ js.Value, args []js.Value) any {
+	w, err := decodeWorld(args)
+	if err != nil {
+		return fail(err)
+	}
+	submitted := map[string][]world.Order{}
+	statements := map[string]string{}
+	for id := range w.Empires {
+		d := agent.Autopilot(w, id)
+		for i := range d.Orders {
+			d.Orders[i].EmpireID = id
+		}
+		submitted[id] = d.Orders
+		statements[id] = d.Statement
+	}
+	result, err := world.ResolveTurn(w, submitted)
+	if err != nil {
+		return fail(err)
+	}
+	payload := struct {
+		World      *world.World      `json:"world"`
+		Result     world.TurnResult  `json:"result"`
+		Statements map[string]string `json:"statements"`
+	}{w, result, statements}
+	return encode(payload)
 }
 
 func advanceTurn(_ js.Value, args []js.Value) any {
