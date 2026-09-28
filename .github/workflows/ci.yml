@@ -28,3 +28,10 @@ jobs:
           npm install --ignore-scripts --package-lock=false
           npm run check
           npm run build
+      - name: Browser smoke test
+        working-directory: browser
+        run: |
+          cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" wasm_exec.js
+          GOOS=js GOARCH=wasm go build -o agame.wasm ../cmd/agame-wasm
+          npx playwright install --with-deps chromium
+          npm run smoke

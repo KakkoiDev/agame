@@ -1,11 +1,13 @@
+import { Buffer } from "buffer";
+globalThis.Buffer ||= Buffer;
 import git from "isomorphic-git";
-import { VFSFileSystem } from "@componentor/fs";
+import LightningFS from "@isomorphic-git/lightning-fs";
 import { GitHubRemote } from "./jikko-github.js";
 
 export class UniverseLibrary {
   constructor(fs, dir="/library") { this.fs=fs; this.dir=dir; this.remote=null; }
   static async open() {
-    const fs=new VFSFileSystem({root:"/agame"}); await fs.init();
+    const fs=new LightningFS("agame",{wipe:false});
     await fs.promises.mkdir("/library",{recursive:true}); await fs.promises.mkdir("/sync",{recursive:true});
     const x=new UniverseLibrary(fs);
     try { await fs.promises.stat("/library/.git"); } catch {
@@ -22,7 +24,10 @@ export class UniverseLibrary {
   connectGitHub(url,token) { this.remote=GitHubRemote.fromURL(url,token); }
   async remoteUniverses() { if(!this.remote)return []; return (await this.remote.branches("universe/")).filter(x=>x.startsWith("universe/")); }
   async createUniverse({id,name,world}) {
-    const ref=this.branchName(id,name); await git.branch({fs:this.fs,dir:this.dir,ref,checkout:true});
+    const ref=this.branchName(id,name);
+    const branches=await git.listBranches({fs:this.fs,dir:this.dir});
+    if(branches.includes(ref)) throw new Error("A universe with this id already exists");
+    await git.branch({fs:this.fs,dir:this.dir,ref,checkout:true});
     await this.write("world.json",JSON.stringify(world,null,2));
     await this.write("universe.json",JSON.stringify({id,name,created:new Date().toISOString()},null,2));
     await this.commit("Turn 0 — universe created","new-universe"); return ref;

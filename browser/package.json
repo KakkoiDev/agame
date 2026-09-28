@@ -3,12 +3,17 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "@componentor/fs": "4.3.1",
-    "isomorphic-git": "1.42.3"
+    "isomorphic-git": "1.42.3",
+    "@isomorphic-git/lightning-fs": "4.6.2",
+    "buffer": "6.0.3"
   },
-  "devDependencies": {"esbuild": "0.25.10"},
+  "devDependencies": {
+    "esbuild": "0.25.10",
+    "@playwright/test": "1.55.1"
+  },
   "scripts": {
-    "check": "node --check src/jikko-github.js && node --check src/library.js && node --check src/app.js",
-    "build": "esbuild src/app.js --bundle --format=esm --platform=browser --outfile=dist/app.js"
+    "check": "node --check src/jikko-github.js && node --check src/library.js && node --check src/models.js && node --check src/app.js",
+    "build": "esbuild src/app.js --bundle --format=esm --platform=browser --outfile=dist/app.js",
+    "smoke": "playwright test"
   }
 }
