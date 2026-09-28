@@ -5,6 +5,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"syscall/js"
 
 	"github.com/KakkoiDev/agame/agent"
@@ -95,17 +96,36 @@ func summary(_ js.Value, args []js.Value) any {
 		Planets    int    `json:"planets"`
 		Exile      bool   `json:"exile"`
 		Eliminated bool   `json:"eliminated"`
+		Fleets     int    `json:"fleets"`
+		Metal      int    `json:"metal"`
+		Crystal    int    `json:"crystal"`
+		Deuterium  int    `json:"deuterium"`
+		Tech       int    `json:"tech"`
 	}
 	out := struct {
 		Seed    int64    `json:"seed"`
 		Turn    int      `json:"turn"`
 		Empires []empire `json:"empires"`
 	}{Seed: w.Seed, Turn: w.Turn}
-	for _, e := range w.Empires {
-		x := empire{ID: e.ID, Name: e.Name, Exile: e.Exile, Eliminated: e.Eliminated}
+	ids := make([]string, 0, len(w.Empires))
+	for id := range w.Empires {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		e := w.Empires[id]
+		x := empire{ID: e.ID, Name: e.Name, Exile: e.Exile, Eliminated: e.Eliminated, Tech: e.Tech.Industry + e.Tech.Propulsion + e.Tech.Weapons + e.Tech.Shields + e.Tech.Sensors + e.Tech.Colonization}
 		for _, p := range w.Planets {
 			if p.OwnerID == e.ID {
 				x.Planets++
+				x.Metal += p.Resources.Metal
+				x.Crystal += p.Resources.Crystal
+				x.Deuterium += p.Resources.Deuterium
+			}
+		}
+		for _, f := range w.Fleets {
+			if f.OwnerID == e.ID {
+				x.Fleets++
 			}
 		}
 		out.Empires = append(out.Empires, x)
