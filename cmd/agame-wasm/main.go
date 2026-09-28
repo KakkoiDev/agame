@@ -35,7 +35,6 @@ func newUniverse(_ js.Value, args []js.Value) any {
 	return encode(w)
 }
 
-
 func autoTurn(_ js.Value, args []js.Value) any {
 	w, err := decodeWorld(args)
 	if err != nil {
