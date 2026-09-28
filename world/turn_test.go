@@ -1,6 +1,6 @@
 package world
 
-import "testing"
+import ("reflect";"testing")
 
 func TestResolveTurnDoesNotDependOnSubmissionMapOrder(t *testing.T) {
 	a, _ := Generate(1, names)
@@ -17,7 +17,7 @@ func TestResolveTurnDoesNotDependOnSubmissionMapOrder(t *testing.T) {
 	r2, _ := ResolveTurn(b, orders2)
 	if len(r1.Accepted) != 2 || len(r2.Accepted) != 2 { t.Fatal("orders unexpectedly rejected") }
 	for i := range r1.Accepted {
-		if r1.Accepted[i] != r2.Accepted[i] { t.Fatal("resolution ordering depends on map iteration") }
+		if !reflect.DeepEqual(r1.Accepted[i], r2.Accepted[i]) { t.Fatal("resolution ordering depends on map iteration") }
 	}
 	if a.Turn != 1 || b.Turn != 1 { t.Fatal("turn did not advance exactly once") }
 }
