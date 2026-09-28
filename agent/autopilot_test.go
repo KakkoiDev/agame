@@ -18,7 +18,7 @@ func TestAutopilotChangesStrategicStateAcross57Turns(t *testing.T){
 	accepted:=0
 	for turn:=0;turn<57;turn++{submitted:=map[string][]world.Order{};for id:=range w.Empires{d:=Autopilot(w,id);for i:=range d.Orders{d.Orders[i].EmpireID=id};submitted[id]=d.Orders};res,err:=world.ResolveTurn(w,submitted);if err!=nil{t.Fatal(err)};accepted+=len(res.Accepted)}
 	if accepted<40{t.Fatalf("only %d accepted orders in 57 turns",accepted)}
-	if ownedCount(w)<=initialOwned{t.Fatalf("no expansion after 57 turns: planets=%d",ownedCount(w))}
+	if ownedCount(w)<=initialOwned{e:=w.Empires["e00"];p:=w.Planets[e.HomeworldID];t.Fatalf("no expansion after 57 turns: planets=%d colonization=%d resources=%+v ships=%+v shipq=%+v fleets=%d",ownedCount(w),e.Tech.Colonization,p.Resources,p.Ships,p.ShipyardQueue,len(w.Fleets))}
 	if techTotal(w)<=initialTech{t.Fatalf("no research after 57 turns: tech=%d",techTotal(w))}
 	if len(w.Fleets)<=initialFleets{t.Fatalf("no persistent fleet activity after 57 turns: fleets=%d",len(w.Fleets))}
 }
