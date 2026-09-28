@@ -133,6 +133,16 @@ GitHub's Git smart-HTTP endpoints do not provide the CORS behavior required for 
 ## D43 — GitHub credentials are ephemeral by default
 The first browser UI accepts a GitHub credential only for the active page lifetime and passes it directly to the Jikko transport. It is not written to OPFS, Web Storage, universe files, commits, or exports. A future OAuth/device-flow UI may replace manual credential entry without changing storage semantics.
 
+
+## D44 — Immediate-play fallback decision provider
+The browser must be playable before optional local ML assets finish downloading. The canonical browser runner therefore has a deterministic zero-download autopilot decision provider that emits ordinary engine orders. Classifier/model decision providers remain swappable and may replace it per ruler or benchmark. The fallback never bypasses engine validation.
+
+## D45 — PWA shell and GitHub Pages distribution
+The browser build is a first-class PWA deployed as a static GitHub Pages artifact. The service worker caches only application/runtime assets; authoritative universes remain in OPFS and Git. GitHub backup remains optional and must never become a prerequisite for local play.
+
+## D46 — Atomic cognition record
+Each completed browser turn stores the world snapshot plus the rulers' auditable statements and resulting events before the Git turn commit. This is the first browser bridge between decision output and durable Jikko-style cognitive history; richer per-ruler Markdown organization can evolve without changing the atomic turn boundary.
+
 # Status
 
 **There are no unresolved v1 questions from the original pre-implementation list.**
