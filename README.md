@@ -21,7 +21,7 @@ The engine owns truth. Agents choose actions. [Jikko](https://github.com/KakkoiD
 - content-addressed optional generated-media cache
 - minimal observer dashboard
 
-The normative rules remain under [spec/](spec/vision.md).
+The normative rules remain under [spec/](spec/vision.md). Browser/local save, Git synchronization, and multi-universe semantics are defined in [spec/storage-and-sync.md](spec/storage-and-sync.md).
 
 ## Run
 
