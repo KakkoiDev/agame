@@ -2,55 +2,47 @@
 
 **One model. Many minds. One universe.**
 
-AGame is a persistent strategy simulation designed primarily for autonomous AI players.
+AGame is a deterministic persistent strategy simulation built for autonomous local-AI rulers.
 
-It is inspired by browser empire games such as OGame, but its purpose is different: create a small deterministic universe in which local language models can build empires, remember history, negotiate, deceive, cooperate, wage war, lose their homeland, recover, and change over long periods.
+The engine owns truth. Agents choose actions. [Jikko](https://github.com/KakkoiDev/jikko) owns each ruler's knowledge, memory and plans.
 
-AGame is also an experiment. A single local model may role-play every ruler. Because every ruler uses the same underlying model, differences in outcome can be attributed to personality, accumulated knowledge, memory, relationships and decisions rather than raw model strength.
+## v1 implementation
 
-This repository is currently **specification only. No implementation should begin until the v1 specification is accepted.**
+- seeded 32-system / 128-planet universe with 8 equal-start empires
+- metal, crystal and deuterium economy
+- buildings, research and ship production queues
+- fleets, graph travel and fuel
+- colonization, physical transport, combat/capture, espionage and recycling
+- government-in-exile/elimination state
+- simultaneous turn barrier
+- JSON snapshots + JSONL event log
+- generic agent interface and OpenAI-compatible local-model adapter
+- Jikko tree/batch-read adapter
+- content-addressed optional generated-media cache
+- minimal observer dashboard
 
-## Core rule
+The normative rules remain under [spec/](spec/vision.md).
 
-> **LLMs choose. The engine executes.**
+## Run
 
-The game engine owns objective truth and deterministically validates/resolves orders. Models never directly modify world state.
+Requires Go 1.24+.
+
+```sh
+go run ./cmd/agame new 42
+go run ./cmd/agame turn
+go run ./cmd/agame serve
+```
+
+State defaults to `./run`; override with `AGAME_RUN`. The observer dashboard is at `http://localhost:8080`.
+
+## Local models
+
+`agent.OpenAICompatible` targets `/v1/chat/completions`, allowing local OpenAI-compatible servers such as LM Studio or Ollama's compatibility endpoint.
+
+The engine itself has no AI dependency. Scripted agents implement the same `agent.Agent` interface.
 
 ## Architecture
 
-AGame has three deliberately separate layers:
+> **LLMs choose. The engine executes.**
 
-1. **World** — objective game state owned by AGame.
-2. **Knowledge** — what a ruler is allowed to know or currently believes, stored through Jikko.
-3. **Memory** — how a ruler interprets its experience, also stored through Jikko.
-
-A ruler can therefore be wrong. The engine may know that an enemy owns 53 cruisers while another emperor remembers observing 27 cruisers 32 turns ago.
-
-## Specifications
-
-- [Vision and principles](spec/vision.md)
-- [Game rules](spec/game.md)
-- [Agents and turns](spec/agents.md)
-- [Jikko cognition and knowledge](spec/jikko.md)
-- [Diplomacy](spec/diplomacy.md)
-- [Reproducibility and benchmarking](spec/benchmark.md)
-- [Dashboard and history](spec/dashboard.md)
-- [Generated media](spec/media.md)
-- [Decisions and open questions](spec/decisions.md)
-
-## Initial implementation direction
-
-The current intended implementation stack is Go + SQLite + server-rendered HTML/HTMX. Local model adapters should support at least Ollama and LM Studio.
-
-These are implementation directions, not game semantics. The engine must remain usable without an LLM through the same agent interface so scripted bots and tests can play.
-
-## Non-goals for v1
-
-- Human-controlled empires.
-- Real-time combat.
-- 3D gameplay.
-- LLM-authored game rules.
-- LLM access to hidden world state.
-- Cloud AI as a requirement.
-- Embedding/RAG infrastructure.
-- Making generated images/audio necessary for simulation correctness.
+AGame state is authoritative. Jikko stores cognition. Generated media is optional presentation and never changes simulation truth.
