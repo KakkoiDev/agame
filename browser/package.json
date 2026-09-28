@@ -4,7 +4,8 @@
   "type": "module",
   "dependencies": {
     "isomorphic-git": "1.42.3",
-    "@isomorphic-git/lightning-fs": "4.6.2"
+    "@isomorphic-git/lightning-fs": "4.6.2",
+    "buffer": "6.0.3"
   },
   "devDependencies": {
     "esbuild": "0.25.10",
