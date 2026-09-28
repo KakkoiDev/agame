@@ -7,7 +7,7 @@ import { GitHubRemote } from "./jikko-github.js";
 export class UniverseLibrary {
   constructor(fs, dir="/library") { this.fs=fs; this.dir=dir; this.remote=null; }
   static async open() {
-    const fs=new LightningFS("agame");
+    const fs=new LightningFS("agame",{wipe:false});\n    await fs.promises.readFile("/").catch(()=>{});
     await fs.promises.mkdir("/library",{recursive:true}); await fs.promises.mkdir("/sync",{recursive:true});
     const x=new UniverseLibrary(fs);
     try { await fs.promises.stat("/library/.git"); } catch {
