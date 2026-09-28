@@ -96,11 +96,11 @@ func summary(_ js.Value, args []js.Value) any {
 		Planets    int    `json:"planets"`
 		Exile      bool   `json:"exile"`
 		Eliminated bool   `json:"eliminated"`
-		Fleets int `json:"fleets"`
-		Metal int `json:"metal"`
-		Crystal int `json:"crystal"`
-		Deuterium int `json:"deuterium"`
-		Tech int `json:"tech"`
+		Fleets     int    `json:"fleets"`
+		Metal      int    `json:"metal"`
+		Crystal    int    `json:"crystal"`
+		Deuterium  int    `json:"deuterium"`
+		Tech       int    `json:"tech"`
 	}
 	out := struct {
 		Seed    int64    `json:"seed"`
@@ -108,7 +108,7 @@ func summary(_ js.Value, args []js.Value) any {
 		Empires []empire `json:"empires"`
 	}{Seed: w.Seed, Turn: w.Turn}
 	ids := make([]string, 0, len(w.Empires))
-	for id := range w.Empires { ids = append(ids, id) }
+	for id := range w.Empires {\n\t\tids = append(ids, id)\n\t}
 	sort.Strings(ids)
 	for _, id := range ids {
 		e := w.Empires[id]
@@ -116,10 +116,10 @@ func summary(_ js.Value, args []js.Value) any {
 		for _, p := range w.Planets {
 			if p.OwnerID == e.ID {
 				x.Planets++
-				x.Metal += p.Resources.Metal; x.Crystal += p.Resources.Crystal; x.Deuterium += p.Resources.Deuterium
+				x.Metal += p.Resources.Metal\n\t\t\t\tx.Crystal += p.Resources.Crystal\n\t\t\t\tx.Deuterium += p.Resources.Deuterium
 			}
 		}
-		for _, f := range w.Fleets { if f.OwnerID == e.ID { x.Fleets++ } }
+		for _, f := range w.Fleets {\n\t\t\tif f.OwnerID == e.ID {\n\t\t\t\tx.Fleets++\n\t\t\t}\n\t\t}
 		out.Empires = append(out.Empires, x)
 	}
 	return encode(out)
