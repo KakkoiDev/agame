@@ -32,13 +32,14 @@ func Autopilot(w *world.World, eid string) Decision {
 	}
 
 	// Expansion is the strategic priority once Colonization is known.
-	if e.Tech.Colonization>0 {
+	if e.Tech.Colonization>0 && len(ps) < 1+e.Tech.Colonization {
 		if p.Ships["colony_ark"]>0 {
 			return one("form_fleet",p.ID,"",map[string]any{"ships":map[string]any{"colony_ark":float64(1)}},"Launching a colony expedition.")
 		}
 		if p.ShipyardQueue==nil && enough(p.Resources,world.ShipSpecs["colony_ark"].Cost) {
 			return one("build_ships",p.ID,"colony_ark",map[string]any{"quantity":1},"Building a Colony Ark for expansion.")
 		}
+		return Decision{Statement:"Reserving resources for a Colony Ark."}
 	}
 
 	// Get Colonization early instead of wandering through technologies.
