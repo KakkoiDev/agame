@@ -5,18 +5,14 @@
 Conceptually:
 
 ```text
-observe(snapshot) -> decide(tools) -> 0..N orders
+observe(snapshot) -> inspect(jikko/tools) -> decide() -> 0..N orders
 ```
 
-The interface must support LLM agents and non-LLM agents.
-
-The model proposes decisions. Only the engine can validate and execute orders.
+The interface supports LLM and non-LLM agents. Models propose decisions; only the engine validates and executes them.
 
 ## Turn lifecycle
 
-Every turn follows this barrier:
-
-1. Freeze authoritative world snapshot S(t).
+1. Freeze authoritative S(t).
 2. Derive each ruler's legal observation from S(t).
 3. Invoke every ruler independently against S(t).
 4. Collect all submitted order sets.
@@ -25,106 +21,147 @@ Every turn follows this barrier:
 7. Resolve all orders deterministically.
 8. Produce S(t+1) and structured events.
 9. Deliver resulting observations/messages.
-10. Allow rulers to update their Jikko knowledge/memory.
+10. Run reflection when triggered.
 11. Record audit data.
 
-No agent may see another agent's current-turn order before the barrier closes.
+No agent sees another agent's current-turn order before the barrier closes.
 
 ## Sequential inference, simultaneous game time
 
-A single local model may physically run Cassian, then Malrec, then Aya because GPU inference is sequential.
+A shared local model physically runs rulers sequentially, but invocation order has no game meaning. Transient model context is reset between rulers.
 
-That execution order has **no game meaning**.
-
-Every invocation receives the same pre-resolution world turn and cannot observe side effects from earlier inference calls.
-
-Transient model context must be reset between rulers.
-
-## Shared model experiment
-
-Canonical mode:
+## Canonical shared-model mode
 
 ```text
-same model weights
-+ ruler A personality/history/knowledge -> ruler A
-+ ruler B personality/history/knowledge -> ruler B
-+ ruler C personality/history/knowledge -> ruler C
+same model weights/config
++ ruler A identity/history/knowledge -> ruler A
++ ruler B identity/history/knowledge -> ruler B
+...
 ```
 
-This isolates context and accumulated experience as experimental variables.
+Different-model tournaments are allowed but labeled separately.
 
-Different-model tournaments are also valid but must be labeled separately.
+## Initial invocation context
 
-## Identity
+The harness supplies:
 
-The harness tells the model which Jikko Identity authenticated it.
+- concise immutable game/rules contract;
+- authenticated Jikko identity;
+- current legal engine observation;
+- permission-filtered Jikko tree;
+- tool schemas.
 
-Authentication identity is not itself a biography dump.
+It does not inject all memories or personality documents automatically.
 
-The ruler may inspect its own accessible Identity document if it wants authored information about itself.
+## Tool surface
 
-## Retrieval loop
+The canonical conceptual tools are:
 
-The default agent begins with:
+```text
+jikko.tree() -> [{path,title,type}]
+jikko.read(path) -> document
+jikko.read_many(paths[]) -> documents[]
+jikko.search(query) -> matches[]
+jikko.create(path, content, type?)
+jikko.update(path, expected_revision, content)
+jikko.mentions() -> documents[]
 
-- system/game contract;
-- authenticated identity name;
-- current engine observation;
-- permission-filtered Jikko file tree;
-- available tool/action schemas.
+game.inspect(ref) -> structured observable game object
+game.submit(orders[], statement?)
+```
 
-It does **not** automatically receive every accessible Jikko file.
+The implementation may expose these through CLI, HTTP or native tool calling, but semantics must remain equivalent.
 
-It may request:
+The engine observation contains stable IDs needed to construct orders; the model should not guess opaque identifiers.
 
-- one file;
-- multiple files in a batch;
-- searches/listings where available;
-- additional retrieval in subsequent tool calls.
+## Order schema
 
-The model decides what is worth reading.
-
-## Decision output
-
-Orders must use a compact structured format, e.g. JSON.
-
-Each turn may additionally include a concise public or auditable rationale/summary. AGame must never require or store hidden chain-of-thought.
-
-Example shape:
+Every order has:
 
 ```json
 {
-  "orders": [
-    {"type": "spy", "target": "vega-2"},
-    {"type": "move", "fleet": "home-1", "destination": "sol-3"}
-  ],
-  "statement": "We will verify Vega before committing the fleet."
+  "type": "move",
+  "actor": "fleet-17",
+  "target": "system-vega",
+  "params": {}
 }
 ```
 
-The exact schema belongs to the implementation ruleset.
+`type`, `actor`, `target` and `params` are interpreted by per-order schemas. Fields not needed by an order may be omitted.
 
-## Memory/reflection phase
+Required v1 order types:
 
-After meaningful outcomes, an agent may write or update Jikko documents/tasks.
+```text
+construct, build_ships, research,
+form_fleet, split_fleet, move, attack, colonize,
+spy, transport, recycle,
+message, alliance_create, alliance_join, alliance_leave
+```
 
-The harness may invite reflection after significant events, but should not dictate the interpretation.
+Submission envelope:
 
-Examples:
+```json
+{
+  "orders": [],
+  "statement": "Concise auditable explanation, not hidden reasoning."
+}
+```
 
-- betrayal;
-- death/destruction of a major fleet;
-- loss/capture of a capital;
-- unexpected alliance assistance;
-- victory in a long war;
-- exile and restoration.
+## Small-model budgets
 
-Character evolution should emerge through authored memory and changed plans rather than hidden engine personality numbers unless a later experiment explicitly adds them.
+Canonical 2B–8B benchmark budget per ruler/turn:
+
+- initial prompt + observation + tree target: **<= 8,000 tokens**;
+- maximum **8 tool-call rounds**;
+- `read_many` may request up to **16 files** in one call;
+- maximum **24 Jikko files returned** in a turn;
+- maximum **24,000 total input tokens** across the turn;
+- final decision output target **<= 2,000 tokens**;
+- at most **2 repair attempts** for malformed structured output.
+
+These are benchmark limits, not engine laws. Other experiments may configure them and must record the values.
+
+If the accessible tree becomes too large for the initial budget, Jikko returns a bounded-depth tree plus directory counts; the model may list deeper paths.
+
+## Reflection triggers
+
+A reflection phase is automatically offered after:
+
+- homeworld/capital captured or recovered;
+- empire enters exile;
+- empire is restored from exile;
+- alliance is joined, left or broken by hostile action;
+- battle destroys >= 50% of the empire's pre-battle fleet combat value;
+- empire captures another empire's homeworld;
+- a ruler receives a message explicitly marked as a major diplomatic proposal;
+- every 12 turns as an annual review.
+
+Reflection is optional: the model may decide no durable memory/update is needed.
+
+The reflection phase has a separate 4-tool-call-round budget and cannot submit game orders.
+
+## Memory integrity
+
+Jikko remains source-first Markdown, but AGame imposes historical discipline:
+
+- agents may update current plans/tasks;
+- agents may append corrections or changed interpretations to memory/intelligence documents;
+- agents must not silently rewrite an old observation as though it had always been known;
+- deletion of durable memory/intelligence is permitted only by creating an auditable tombstone/retraction event;
+- Git/Jikko history preserves prior text.
+
+A ruler may be mistaken. Corrections should say what changed and when.
+
+## Ruler succession
+
+v1 rulers do **not** die of age and there is no automatic succession system.
+
+The same ruler Identity may persist for the full 50-year canonical run. This deliberately isolates memory/personality effects.
+
+Succession can later be introduced as a separate experiment rather than confounding v1.
 
 ## Failure handling
 
-A malformed model response must not corrupt the universe.
+Malformed responses cannot corrupt the universe.
 
-The harness should support bounded repair attempts. If no valid decision is obtained, the safe fallback is zero orders for that ruler.
-
-Timeouts, parse failures and repair attempts are benchmark data.
+After at most two repair attempts, failure becomes zero orders for that ruler. Timeouts, parse failures and repairs are benchmark data.
