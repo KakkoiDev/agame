@@ -46,8 +46,8 @@ func advanceTurn(_ js.Value, args []js.Value) any {
 func summary(_ js.Value, args []js.Value) any {
 	w, err := decodeWorld(args)
 	if err != nil { return fail(err) }
-	type empire struct { ID, Name string; Planets int; Exile, Eliminated bool }
-	out := struct { Seed int64; Turn int; Empires []empire }{Seed:w.Seed, Turn:w.Turn}
+	type empire struct { ID string `json:"id"`; Name string `json:"name"`; Planets int `json:"planets"`; Exile bool `json:"exile"`; Eliminated bool `json:"eliminated"` }
+	out := struct { Seed int64 `json:"seed"`; Turn int `json:"turn"`; Empires []empire `json:"empires"` }{Seed:w.Seed, Turn:w.Turn}
 	for _, e := range w.Empires {
 		x := empire{ID:e.ID, Name:e.Name, Exile:e.Exile, Eliminated:e.Eliminated}
 		for _, p := range w.Planets { if p.OwnerID == e.ID { x.Planets++ } }
