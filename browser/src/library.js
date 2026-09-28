@@ -22,7 +22,10 @@ export class UniverseLibrary {
   connectGitHub(url,token) { this.remote=GitHubRemote.fromURL(url,token); }
   async remoteUniverses() { if(!this.remote)return []; return (await this.remote.branches("universe/")).filter(x=>x.startsWith("universe/")); }
   async createUniverse({id,name,world}) {
-    const ref=this.branchName(id,name); await git.branch({fs:this.fs,dir:this.dir,ref,checkout:true});
+    const ref=this.branchName(id,name);
+    const branches=await git.listBranches({fs:this.fs,dir:this.dir});
+    if(branches.includes(ref)) throw new Error("A universe with this id already exists");
+    await git.branch({fs:this.fs,dir:this.dir,ref,checkout:true});
     await this.write("world.json",JSON.stringify(world,null,2));
     await this.write("universe.json",JSON.stringify({id,name,created:new Date().toISOString()},null,2));
     await this.commit("Turn 0 — universe created","new-universe"); return ref;
