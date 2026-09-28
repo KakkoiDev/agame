@@ -12,9 +12,9 @@ var TechBase = map[string]Resources{
 }
 type ShipSpec struct{ Cost Resources; Hull, Attack, Cargo, Fuel int }
 var ShipSpecs = map[string]ShipSpec{
-	"scout": {{20,40,20},20,5,0,2}, "transport": {{60,30,30},60,5,250,4},
-	"colony_ark": {{200,150,100},150,10,100,8}, "frigate": {{100,50,30},100,40,10,5},
-	"cruiser": {{240,120,80},260,110,20,10}, "recycler": {{80,60,40},80,5,200,5},
+	"scout": {Cost: Resources{20,40,20}, Hull:20, Attack:5, Cargo:0, Fuel:2}, "transport": {Cost: Resources{60,30,30}, Hull:60, Attack:5, Cargo:250, Fuel:4},
+	"colony_ark": {Cost: Resources{200,150,100}, Hull:150, Attack:10, Cargo:100, Fuel:8}, "frigate": {Cost: Resources{100,50,30}, Hull:100, Attack:40, Cargo:10, Fuel:5},
+	"cruiser": {Cost: Resources{240,120,80}, Hull:260, Attack:110, Cargo:20, Fuel:10}, "recycler": {Cost: Resources{80,60,40}, Hull:80, Attack:5, Cargo:200, Fuel:5},
 }
 func scale(base Resources, level int) Resources {
 	m:=1
