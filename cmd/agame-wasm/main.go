@@ -114,7 +114,7 @@ func summary(_ js.Value, args []js.Value) any {
 	sort.Strings(ids)
 	for _, id := range ids {
 		e := w.Empires[id]
-		x := empire{ID: e.ID, Name: e.Name, Exile: e.Exile, Eliminated: e.Eliminated, Tech: e.Tech.Industry+e.Tech.Propulsion+e.Tech.Weapons+e.Tech.Shields+e.Tech.Sensors+e.Tech.Colonization}
+		x := empire{ID: e.ID, Name: e.Name, Exile: e.Exile, Eliminated: e.Eliminated, Tech: e.Tech.Industry + e.Tech.Propulsion + e.Tech.Weapons + e.Tech.Shields + e.Tech.Sensors + e.Tech.Colonization}
 		for _, p := range w.Planets {
 			if p.OwnerID == e.ID {
 				x.Planets++
