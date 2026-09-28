@@ -1,54 +1,14 @@
 import {UniverseLibrary} from "./library.js";
-
-const $=s=>document.querySelector(s);
-let lib, currentRef="", world=null;
-
-async function boot(){
-  while(!globalThis.AGameWASM) await new Promise(r=>setTimeout(r,20));
-  lib=await UniverseLibrary.open();
-  await refresh();
-  $("#new-game").addEventListener("submit",newGame);
-  $("#advance").addEventListener("click",advance);
-  $("#sync").addEventListener("click",sync);
-  $("#connect").addEventListener("submit",connect);
-  navigator.serviceWorker?.register("./sw.js").catch(()=>{});
-}
-async function refresh(){
-  const local=await lib.localUniverses(); let remote=[]; try{remote=await lib.remoteUniverses()}catch{}
-  const all=[...new Set([...local,...remote])];
-  $("#games").innerHTML=all.length?all.map(r=>{const here=local.includes(r);return `<button class="game" data-ref="${esc(r)}" data-local="${here}">${esc(r.replace("universe/",""))} · ${here?"local":"GitHub"}</button>`}).join(""):"<p>No universes yet.</p>";
-  document.querySelectorAll(".game").forEach(b=>b.addEventListener("click",()=>b.dataset.local==="true"?openGame(b.dataset.ref):restoreGame(b.dataset.ref)));
-}
-async function newGame(e){
-  e.preventDefault(); const name=$("#name").value.trim()||"New universe"; const seed=Number($("#seed").value)||1;
-  const r=AGameWASM.newUniverse(seed); if(!r.ok) return status(r.error);
-  const id=crypto.randomUUID().slice(0,8); world=JSON.parse(r.json); currentRef=await lib.createUniverse({id,name,world});
-  await refresh(); render(); status("Created locally. Ready offline.");
-}
-async function openGame(ref){ world=await lib.load(ref); currentRef=ref; render(); }
-async function restoreGame(ref){status("Downloading universe…");world=await lib.restore(ref);currentRef=ref;await refresh();render();status("Universe restored locally and ready offline.");}
-async function advance(){
-  if(!world)return; const r=AGameWASM.advanceTurn(JSON.stringify(world),"{}"); if(!r.ok)return status(r.error);
-  const out=JSON.parse(r.json); world=out.world; await lib.saveTurn(world); render(); status("Turn committed locally.");
-  if(sessionStorage.getItem("agame-sync")==="1") sync().catch(()=>{});
-}
-async function connect(e){
-  e.preventDefault(); const url=$("#remote").value.trim(), token=$("#token").value.trim(); if(!url||!token)return;
-  lib.connectGitHub(url,token); sessionStorage.setItem("agame-sync","1");
-  status("GitHub backup connected for this browser session."); await refresh(); if(currentRef) await sync();
-}
-async function sync(){
-  if(!lib.remote)return status("Connect GitHub first.");
-  status("Syncing…");
-  try{await lib.backupCurrent();status("Backed up to GitHub.");}
-  catch(e){status("Local save is safe; backup pending: "+e.message)}
-}
-function render(){
-  $("#play").hidden=!world;if(!world)return;
-  const s=JSON.parse(AGameWASM.summary(JSON.stringify(world)).json);
-  $("#turn").textContent=`Turn ${s.turn} · seed ${s.seed}`;
-  $("#empires").innerHTML=s.empires.map(e=>`<tr><td>${esc(e.Name||e.name)}</td><td>${e.Planets??e.planets}</td><td>${(e.Eliminated??e.eliminated)?"eliminated":(e.Exile??e.exile)?"exile":"sovereign"}</td></tr>`).join("");
-}
-function status(x){$("#status").textContent=x}
-function esc(x){return String(x).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]))}
-boot();
+const $=s=>document.querySelector(s);let lib,currentRef="",world=null,running=false,deferredInstall=null;
+async function boot(){while(!globalThis.AGameWASM)await new Promise(r=>setTimeout(r,20));lib=await UniverseLibrary.open();bind();await refresh();status("Ready — playable offline.");navigator.serviceWorker?.register("./sw.js").catch(()=>{});}
+function bind(){$("#new-game").addEventListener("submit",newGame);$("#advance").onclick=()=>advance(1);$("#advance12").onclick=()=>advance(12);$("#autorun").onchange=e=>{running=e.target.checked;if(running)loop()};$("#sync").onclick=sync;$("#connect").onsubmit=connect;$("#install").onclick=async()=>{if(deferredInstall){deferredInstall.prompt();await deferredInstall.userChoice;deferredInstall=null;$("#install").hidden=true}};addEventListener("beforeinstallprompt",e=>{e.preventDefault();deferredInstall=e;$("#install").hidden=false});}
+async function refresh(){const local=await lib.localUniverses();let remote=[];try{remote=await lib.remoteUniverses()}catch{}const all=[...new Set([...local,...remote])];$("#games").innerHTML=all.length?all.map(r=>{const here=local.includes(r);return `<button class="game" data-ref="${esc(r)}" data-local="${here}">${esc(r.replace("universe/",""))} · ${here?"on device":"GitHub"}</button>`}).join(""):"<p class=muted>No universes yet. Create one below.</p>";document.querySelectorAll(".game").forEach(b=>b.onclick=()=>b.dataset.local==="true"?openGame(b.dataset.ref):restoreGame(b.dataset.ref));}
+async function newGame(e){e.preventDefault();const name=$("#name").value.trim()||"New universe",seed=Number($("#seed").value)||1,r=AGameWASM.newUniverse(seed);if(!r.ok)return status(r.error);world=JSON.parse(r.json);currentRef=await lib.createUniverse({id:crypto.randomUUID().slice(0,8),name,world});await refresh();render();status("Universe created. Eight rulers are ready.");}
+async function openGame(ref){world=await lib.load(ref);currentRef=ref;render();status("Universe loaded from this device.");}
+async function restoreGame(ref){status("Downloading universe…");world=await lib.restore(ref);currentRef=ref;await refresh();render();status("Restored. It is now playable offline.");}
+async function advance(n=1){if(!world)return;$("#advance").disabled=true;try{for(let i=0;i<n;i++){const r=AGameWASM.autoTurn(JSON.stringify(world));if(!r.ok)throw new Error(r.error);const out=JSON.parse(r.json);world=out.world;await lib.saveTurn(world,out);render(out);await new Promise(requestAnimationFrame)}status(`Turn ${world.Turn} committed locally.`);if(sessionStorage.getItem("agame-sync")==="1")sync().catch(()=>{});}catch(e){status(e.message)}finally{$("#advance").disabled=false}}
+async function loop(){while(running&&world){await advance(1);await new Promise(r=>setTimeout(r,250))}}
+async function connect(e){e.preventDefault();const url=$("#remote").value.trim(),token=$("#token").value.trim();if(!url||!token)return;lib.connectGitHub(url,token);sessionStorage.setItem("agame-sync","1");status("GitHub backup connected for this page session.");await refresh();if(currentRef)await sync();}
+async function sync(){if(!lib.remote)return status("Connect GitHub first.");status("Backing up…");try{await lib.backupCurrent();status("Backed up to GitHub.");}catch(e){status("Local save is safe; backup pending: "+e.message)}}
+function render(last=null){$("#play").hidden=!world;if(!world)return;const s=JSON.parse(AGameWASM.summary(JSON.stringify(world)).json);$("#turn").textContent=`Turn ${s.turn} · Year ${Math.floor(s.turn/12)+1}`;$("#empires").innerHTML=s.empires.map(e=>`<tr><td>${esc(e.name)}</td><td>${e.planets}</td><td>${e.eliminated?"eliminated":e.exile?"exile":"sovereign"}</td></tr>`).join("");$("#empire-cards").innerHTML=s.empires.map(e=>`<div class=card><strong>${esc(e.name)}</strong><div>${e.planets} planet${e.planets===1?"":"s"}</div><div class="${e.eliminated?"muted":"good"}">${e.eliminated?"Eliminated":e.exile?"Government in exile":"Sovereign"}</div></div>`).join("");if(last)$("#decisions").textContent=Object.entries(last.statements||{}).map(([id,x])=>id+": "+x).join("\n");}
+function status(x){$("#status").textContent=x}function esc(x){return String(x).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]))}boot();

@@ -1,0 +1,52 @@
+name: Deploy Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.24.x'
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - name: Build Go WASM
+        run: |
+          GOOS=js GOARCH=wasm go build -o browser/agame.wasm ./cmd/agame-wasm
+          cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" browser/wasm_exec.js
+      - name: Build browser bundle
+        working-directory: browser
+        run: |
+          npm install --ignore-scripts --package-lock=false
+          npm run check
+          npm run build
+          touch .nojekyll
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: browser
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4
