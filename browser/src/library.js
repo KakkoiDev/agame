@@ -37,7 +37,13 @@ export class UniverseLibrary {
     await this.commit("Restore "+ref+" from GitHub","restore");
     await this.setSyncHead(ref,snap.sha); return JSON.parse(new TextDecoder().decode(snap.files["world.json"]));
   }
-  async saveTurn(world) { await this.write("world.json",JSON.stringify(world,null,2)); return this.commit("Turn "+world.Turn,"turn"); }
+  async saveTurn(world, cognition={}) {
+    await this.write("world.json",JSON.stringify(world,null,2));
+    await this.write("last-turn.json",JSON.stringify(cognition,null,2));
+    const journal={turn:world.Turn,statements:cognition.statements||{},events:cognition.result?.events||[]};
+    await this.write("jikko-turn.json",JSON.stringify(journal,null,2));
+    return this.commit("Turn "+world.Turn,"turn");
+  }
   async backupCurrent() {
     if(!this.remote)throw new Error("GitHub is not connected");
     const ref=await this.current(); if(!ref?.startsWith("universe/"))throw new Error("No universe checked out");
