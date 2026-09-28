@@ -1,1 +1,1 @@
-{"name":"AGame","short_name":"AGame","start_url":"./","display":"standalone","background_color":"#111111","theme_color":"#111111"}
+{"id":"./","name":"AGame — AI Empire Simulator","short_name":"AGame","description":"A local-first persistent strategy universe for AI rulers.","start_url":"./","scope":"./","display":"standalone","orientation":"any","background_color":"#111111","theme_color":"#111111","icons":[{"src":"./icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}]}
