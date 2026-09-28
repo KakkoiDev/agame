@@ -109,7 +109,7 @@ func summary(_ js.Value, args []js.Value) any {
 	}{Seed: w.Seed, Turn: w.Turn}
 	ids := make([]string, 0, len(w.Empires))
 	for id := range w.Empires {
-	\tids = append(ids, id)
+		ids = append(ids, id)
 	}
 	sort.Strings(ids)
 	for _, id := range ids {
@@ -119,15 +119,15 @@ func summary(_ js.Value, args []js.Value) any {
 			if p.OwnerID == e.ID {
 				x.Planets++
 				x.Metal += p.Resources.Metal
-	\t\t\tx.Crystal += p.Resources.Crystal
-	\t\t\tx.Deuterium += p.Resources.Deuterium
+				x.Crystal += p.Resources.Crystal
+				x.Deuterium += p.Resources.Deuterium
 			}
 		}
 		for _, f := range w.Fleets {
-	\t\tif f.OwnerID == e.ID {
-	\t\t\tx.Fleets++
-	\t\t}
-	\t}
+			if f.OwnerID == e.ID {
+				x.Fleets++
+			}
+		}
 		out.Empires = append(out.Empires, x)
 	}
 	return encode(out)
