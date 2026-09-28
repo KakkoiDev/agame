@@ -40,7 +40,7 @@ async function connect(e){
 async function sync(){
   if(!lib.remote)return status("Connect GitHub first.");
   status("Syncing…");
-  try{await lib.backupCurrent();status("Backed up to GitHub.");
+  try{await lib.backupCurrent();status("Backed up to GitHub.");}
   catch(e){status("Local save is safe; backup pending: "+e.message)}
 }
 function render(){
