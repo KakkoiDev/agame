@@ -1,3 +1,5 @@
+import { Buffer } from "buffer";
+globalThis.Buffer ||= Buffer;
 import git from "isomorphic-git";
 import LightningFS from "@isomorphic-git/lightning-fs";
 import { GitHubRemote } from "./jikko-github.js";
