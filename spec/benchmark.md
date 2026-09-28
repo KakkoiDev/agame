@@ -1,18 +1,34 @@
 # Reproducibility and benchmarking
 
+## Canonical benchmark
+
+Unless an experiment says otherwise:
+
+- 8 empires;
+- 32 systems × 4 planetary slots;
+- 600 monthly turns maximum;
+- identical material starting conditions;
+- one shared model/configuration for all rulers;
+- different authored ruler identities/personality seeds;
+- deterministic universe seed and engine resolution;
+- small-model tool/context budgets defined in `agents.md`.
+
+A benchmark suite should run **multiple universe seeds**. One run is a story, not a statistically meaningful model comparison.
+
 ## Reproducible universe
 
-Every run has:
+Every run records:
 
 - ruleset version;
 - universe seed;
 - initial-state definition/hash;
 - agent roster;
-- model identifier and quantization;
-- inference configuration;
+- model identifier/checkpoint and quantization;
+- inference configuration and sampling seed where supported;
 - prompt/harness version;
-- Jikko revision;
-- media generation configuration if enabled.
+- Jikko starting revision;
+- tool/context budgets;
+- media configuration if enabled.
 
 Engine randomness uses seeded deterministic RNG.
 
@@ -20,110 +36,64 @@ Engine randomness uses seeded deterministic RNG.
 
 Every authoritative state transition emits a structured append-only event.
 
-A complete event log plus initial state/ruleset must be sufficient to reconstruct or verify the world trajectory.
+Initial state + ruleset + event log must be sufficient to reconstruct/verify the world trajectory.
 
 ## Decision record
 
-For every ruler/turn, record:
+For every ruler/turn record:
 
-- invocation order (operational only);
+- operational invocation order;
 - identity;
 - observation;
 - visible tree/revision;
 - files actually retrieved;
 - messages available;
 - model/config;
-- latency;
-- inference usage where available;
+- latency and inference usage;
 - parse/repair failures;
-- final structured orders;
-- concise supplied statement/rationale if any.
+- final orders;
+- concise supplied statement.
 
-Do not store hidden chain-of-thought.
+Never store hidden chain-of-thought.
 
 ## Comparison modes
 
 ### Same model, different minds
-
-All rulers use identical model/configuration with different personality/history/knowledge.
-
-Primary question: how much behavioral diversity emerges from persistent context?
+Identical model/configuration, different personality/history/knowledge.
 
 ### Same universe, different models
-
-Replay the same initial seed/personality set using different local models.
-
-Primary question: how does model capability alter long-horizon performance?
+Same initial seeds/personality set, different local models.
 
 ### Ablations
-
-Useful experiments include:
-
-- no persistent memory;
-- no diplomacy;
-- tree-only retrieval versus search availability;
-- different context limits;
-- different sampling parameters;
-- personality removed;
-- scripted baseline agents.
+Useful variants include no persistent memory, no diplomacy, tree-only retrieval, different context limits, different sampling, personality removed and scripted baselines.
 
 ## Metrics
 
-At minimum:
-
 ### Survival
-- turns survived;
-- elimination/restoration events;
-- planets controlled over time.
+Turns survived; exile/restoration; planets controlled.
 
 ### Economy
-- resource production;
-- resource efficiency;
-- infrastructure growth;
-- idle/wasted resources.
+Production; efficiency; infrastructure growth; idle/wasted resources.
 
 ### Military
-- fleet strength over time;
-- losses inflicted/suffered;
-- successful defenses;
-- successful captures;
-- salvage efficiency.
+Fleet value; losses inflicted/suffered; defenses; captures; salvage.
 
 ### Expansion
-- colonies founded;
-- planets captured/lost;
-- time to expansion.
+Colonies; captures/losses; time to expansion.
 
 ### Intelligence
-- espionage attempts/success;
-- age of intelligence used in decisions;
-- retrieval behavior;
-- relevant-memory retrieval where objectively measurable.
+Espionage; age of intelligence used; retrieval behavior; measurable relevant-memory retrieval.
 
 ### Diplomacy
-- alliances joined/left;
-- agreements made;
-- agreements honored/broken where machine-detectable;
-- assistance given/received;
-- message volume.
+Alliances; agreements; detectable honored/broken commitments; aid; message volume.
 
 ### Agent operation
-- inference latency;
-- tokens/usage where available;
-- tool calls;
-- files read;
-- malformed outputs;
-- repair attempts;
-- zero-order turns.
+Latency; tokens; tool calls; files read; malformed outputs; repairs; zero-order turns.
 
-## No single intelligence score
+## No universal intelligence score
 
-AGame should expose measurements, not collapse all behavior into one arbitrary universal score.
-
-Benchmarks may define experiment-specific aggregate metrics, but raw measurements remain available.
+Expose raw measurements. Experiment-specific aggregates are allowed but must not replace underlying metrics.
 
 ## Replay
 
-The dashboard should be able to replay a completed run without invoking agents.
-
-A replay must distinguish authoritative events from ruler knowledge at that historical moment.
+Completed runs replay without invoking agents and distinguish objective historical truth from each ruler's historical knowledge.
