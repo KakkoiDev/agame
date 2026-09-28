@@ -4,6 +4,7 @@ const $=s=>document.querySelector(s);
 let lib, currentRef="", world=null;
 
 async function boot(){
+  while(!globalThis.AGameWASM) await new Promise(r=>setTimeout(r,20));
   lib=await UniverseLibrary.open();
   await refresh();
   $("#new-game").addEventListener("submit",newGame);
