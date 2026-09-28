@@ -39,7 +39,7 @@ type Empire struct {
 	AllianceID string
 }
 type Message struct{ Turn int; From, To, Body string; Major bool }
-type Event struct{ Turn int `json:"turn"`; Type, EmpireID, Target, Detail string `json:"type,omitempty"` }
+type Event struct{ Turn int `json:"turn"`; Type string `json:"type,omitempty"`; EmpireID string `json:"empire_id,omitempty"`; Target string `json:"target,omitempty"`; Detail string `json:"detail,omitempty"` }
 type World struct {
 	Seed int64
 	Turn int
