@@ -1,106 +1,105 @@
-# Decisions and open questions
+# Decisions — v1 pre-implementation
 
-This file records design decisions made before implementation.
+All previously open v1 design questions are resolved here. Implementation must not silently change these semantics; new uncertainty should be recorded as a new decision.
 
 ## D1 — Deterministic engine owns truth
-
-**Decision:** AGame, not the LLM, owns authoritative world state.
-
-**Reason:** reproducibility, testability and prevention of narrative hallucinations becoming game facts.
+AGame, not the LLM, owns authoritative world state.
 
 ## D2 — Simultaneous strategic turns
+All rulers decide from the same frozen snapshot; resolution begins only after all decisions are collected.
 
-**Decision:** all rulers decide from the same frozen snapshot; orders resolve only after all decisions are collected.
+## D3 — No global order cap
+A turn may contain zero or many orders. Physical queues, fleets and resources constrain concurrency instead of arbitrary action points.
 
-**Reason:** sequential local inference must not give later-invoked rulers an information advantage.
-
-## D3 — One or more orders
-
-**Decision:** a turn may contain zero, one or multiple orders.
-
-**Reason:** strategy requires concurrent economic, fleet and diplomatic decisions; forcing one artificial action per turn is unnecessary.
-
-## D4 — Planet capture preserves sovereignty target
-
-**Decision:** enemy planets can be captured intact rather than only destroyed.
-
-**Reason:** territorial history and changing borders are central to the simulation.
+## D4 — Planet capture preserves infrastructure
+Enemy planets can be captured intact; capture rules determine surviving resources/queues.
 
 ## D5 — Government in exile
-
-**Decision:** loss of the final planet is not elimination while viable colony/escape-capable assets remain.
-
-**Reason:** exile, recolonization and restoration create meaningful long-horizon history.
+Final-planet loss is not elimination while a viable Colony Ark can still restore sovereignty.
 
 ## D6 — Shared model, isolated minds
-
-**Decision:** canonical experiments may use one local model for every ruler, invoked independently with isolated context.
-
-**Reason:** separates personality/memory/context effects from model capability.
+Canonical experiments use one model/config for every ruler with completely isolated transient contexts.
 
 ## D7 — Jikko for cognition, not reality
-
-**Decision:** authoritative world truth stays in AGame; Jikko stores identity, knowledge, beliefs, memories, plans and communication.
-
-**Reason:** preserves imperfect knowledge and prevents two sources of truth.
+World truth is AGame state; Jikko stores identity, knowledge, belief, memory, plans and communication.
 
 ## D8 — Retrieval is agent responsibility
+No automatic memory/context selection. Permission-filtered tree + explicit reads/search.
 
-**Decision:** no automatic Jikko context assembly. Agents receive a permission-filtered file tree and choose files to read/batch-read.
-
-**Reason:** retrieval and memory management are themselves aspects of agent intelligence.
-
-## D9 — No new Jikko primitives for AGame
-
-**Decision:** use Identity, Document, Task and View.
-
-**Reason:** AGame is a useful stress test of Jikko's minimal model; concepts such as memory/message/faction do not yet justify new primitives.
+## D9 — No AGame-specific Jikko primitives
+Use Identity, Document, Task and View.
 
 ## D10 — No hidden relationship score
-
-**Decision:** social interpretation lives primarily in agent-authored Jikko knowledge rather than an engine friendship scalar.
-
-**Reason:** makes evolving relationships inspectable and permits disagreement/deception.
+Social interpretation remains inspectable agent-authored knowledge.
 
 ## D11 — Messages affect the next turn by default
-
-**Decision:** messages written during turn t arrive after the decision barrier and can affect t+1.
-
-**Reason:** preserves simultaneous decisions without adding negotiation sub-phases.
+Turn-t messages are delivered after the decision barrier.
 
 ## D12 — Media is non-authoritative
+Images/music/SFX are optional presentation.
 
-**Decision:** local image/music/SFX generation is optional presentation.
+## D13 — Specification before implementation
+No implementation until v1 questions are closed.
 
-**Reason:** simulation reproducibility must not depend on expensive generative media.
+## D14 — Canonical universe and clock
+One turn is one month. 8 empires inhabit a seeded graph of 32 systems with 4 planetary slots each (128 slots). Homeworlds use fair seeded max-distance placement and equal material starts.
 
-## D13 — No implementation yet
+## D15 — Buildings and progression
+Seven building families: Metal Mine, Crystal Mine, Deuterium Extractor, Infrastructure, Research Lab, Shipyard, Defense Grid. Costs double each level; exact base costs/effects are normative in `game.md`.
 
-**Decision:** this repository begins as specifications only.
+## D16 — Research tree
+Six technologies: Industry, Propulsion, Weapons, Shields, Sensors, Colonization. Costs double each level; exact effects are in `game.md`.
 
-**Reason:** settle the game/agent boundaries before code makes accidental design decisions permanent.
+## D17 — Ship roster
+Six classes: Scout, Transport, Colony Ark, Frigate, Cruiser, Recycler. Their v1 costs/stats are normative in `game.md`.
 
-# Open questions before v1 implementation
+## D18 — Combat/capture/retreat
+Combat lasts at most six simultaneous-damage rounds with seeded target allocation. Surviving attackers retreat after a six-round stalemate. A surviving combat ship captures an undefended planet. Exact capture effects are in `game.md`.
 
-These should be resolved through specification work rather than silently chosen in code.
+## D19 — Espionage
+Scout espionage uses Sensors-level difference to produce four information tiers with bounded deterministic noise. Intelligence is timestamped and can become stale.
 
-1. Exact building list and cost/progression formulas.
-2. Exact research tree.
-3. Exact ship roster and combat statistics.
-4. Combat/capture/retreat resolution algorithm.
-5. Espionage noise and information tiers.
-6. Maximum/default number of orders per turn, if any.
-7. Construction/research queue semantics.
-8. Fleet travel-time model and whether movement spans multiple turns.
-9. Resource transfer/trade mechanics.
-10. Mechanical representation, if any, of formal alliances and treaties.
-11. Universe topology and initial placement rules.
-12. Default number of rulers and planets for the canonical benchmark.
-13. Rules for ruler succession, if characters can die/retire.
-14. Which events automatically invite a reflection phase.
-15. Exact structured agent/tool schemas.
-16. Context/tool-call budget for small models.
-17. Rules for editing/deleting past memories versus appending corrections.
-18. What constitutes a viable escape asset for elimination.
-19. Default end condition for showcase runs.
-20. Whether generated media belongs inside the run directory or an external cache.
+## D20 — Queues
+One construction and one shipyard queue per planet; one research queue per empire. Progress spans turns. Resources are paid on queueing; cancellation refunds 50%.
+
+## D21 — Travel
+Movement follows graph routes. Base speed is one edge/turn; Propulsion improves speed. Deuterium fuel is paid at departure. Multi-turn travel is normal.
+
+## D22 — Trade
+Resources move physically in cargo. Negotiated exchange is not engine-enforced; betrayal/default is possible.
+
+## D23 — Alliance mechanics
+The engine recognizes alliance membership and hostility but does not enforce most promises. Attacking an ally is legal, automatically leaves the alliance and records a breach.
+
+## D24 — Rulers
+v1 has no aging/death/succession. Persistent ruler identities survive the canonical 50-year horizon unless their empire is eliminated.
+
+## D25 — Reflection
+Major territorial, military, exile/restoration and alliance events trigger optional reflection; an annual review occurs every 12 turns.
+
+## D26 — Agent/tool schema
+Canonical tools are Jikko tree/read/read-many/search/create/update/mentions plus observable game inspection and one structured order submission envelope. Stable game IDs are supplied by the engine.
+
+## D27 — Small-model budget
+Canonical 2B–8B runs target 8k initial context, 8 tool-call rounds, 16 files/read-many, 24 files returned, 24k aggregate input tokens, 2k final output and at most two repair attempts.
+
+## D28 — Memory correction, not silent revisionism
+Plans may be updated. Historical observations/memories must preserve corrections/retractions in auditable history; durable deletion requires a tombstone/retraction event.
+
+## D29 — Viable exile
+A planetless empire survives only if it has a Colony Ark capable of reaching a planet under the rules. Ordinary military fleets alone do not prevent elimination.
+
+## D30 — Canonical end condition
+A canonical run ends at 600 turns (50 years), one remaining empire, a true engine-detectable sovereignty dead-end, or explicit observer stop for non-benchmark runs.
+
+## D31 — Media cache
+Run data stores media manifests/references; heavy generated binaries live in a content-addressed external cache. Portable exports may bundle them.
+
+## D32 — Reproducible benchmarks
+Canonical comparisons use multiple seeds and record model/checkpoint, quantization, sampling, harness, Jikko revision and context/tool budgets.
+
+# Status
+
+**There are no unresolved v1 questions from the original pre-implementation list.**
+
+Future balancing discovered through simulation is expected, but it must be an explicit ruleset/version change rather than an undocumented implementation choice.
