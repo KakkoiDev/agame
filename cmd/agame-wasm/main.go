@@ -13,12 +13,11 @@ import (
 var names = []string{"Cassian", "Malrec", "Aya", "Kael", "Iona", "Talos", "Nara", "Orion"}
 
 func main() {
-	api := map[string]any{
-		"newUniverse": js.FuncOf(newUniverse),
-		"advanceTurn": js.FuncOf(advanceTurn),
-		"summary": js.FuncOf(summary),
-	}
-	js.Global().Set("AGameWASM", js.ValueOf(api))
+	api := js.Global().Get("Object").New()
+	api.Set("newUniverse", js.FuncOf(newUniverse))
+	api.Set("advanceTurn", js.FuncOf(advanceTurn))
+	api.Set("summary", js.FuncOf(summary))
+	js.Global().Set("AGameWASM", api)
 	select {}
 }
 
