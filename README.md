@@ -16,7 +16,7 @@ The engine owns truth. Agents choose actions. [Jikko](https://github.com/KakkoiD
 - government-in-exile/elimination state
 - simultaneous turn barrier
 - JSON snapshots + JSONL event log
-- generic agent interface and OpenAI-compatible local-model adapter
+- swappable structured-decision/classifier providers and independent text generators
 - Jikko tree/batch-read adapter
 - content-addressed optional generated-media cache
 - minimal observer dashboard
@@ -35,11 +35,24 @@ go run ./cmd/agame serve
 
 State defaults to `./run`; override with `AGAME_RUN`. The observer dashboard is at `http://localhost:8080`.
 
-## Local models
+## Swappable local cognition
 
-`agent.OpenAICompatible` targets `/v1/chat/completions`, allowing local OpenAI-compatible servers such as LM Studio or Ollama's compatibility endpoint.
+AGame separates **decision** from **language**:
 
-The engine itself has no AI dependency. Scripted agents implement the same `agent.Agent` interface.
+```text
+world observation -> DecisionProvider -> structured gameplay orders / writing intents
+                                      -> TextGenerator -> messages, reports, memories
+```
+
+`DecisionProvider` is model-neutral. `agent.ClassifierHTTP` targets a tiny local structured-classification service, so GLiNER2.5/GLiNER2.5-Decide or another classifier can be swapped without changing the engine. `ScriptedDecision` supports deterministic bots/tests.
+
+`TextGenerator` is independent. `agent.OpenAICompatible` can point at a local 2B model through LM Studio, Ollama's OpenAI-compatible endpoint, or another compatible server. It is invoked only for requested prose.
+
+`JikkoSink` writes generated reports, memories, plans and other prose to Jikko. The decision provider does not need to generate Markdown.
+
+`OpenAICompatible` also implements `DecisionProvider`, so experiments can swap the classifier out for a generative decision model without changing the runner.
+
+The engine itself has no AI dependency.
 
 ## Architecture
 
