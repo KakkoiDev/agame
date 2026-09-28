@@ -14,6 +14,10 @@ The canonical experiment runs all rulers sequentially through the same local lan
 
 A model must never inherit another ruler's transient context.
 
+### Multiple universes are first-class
+
+A player may create any number of independent universes from the start. AGame never assumes one implicit global save. Each universe is isolated and independently playable/synchronizable; the storage convention is defined in [storage-and-sync.md](storage-and-sync.md).
+
 ### Persistent consequences
 
 The universe persists across turns. Empires grow and collapse. Planets change hands. Diplomatic history matters. Memories can affect decisions decades later.
