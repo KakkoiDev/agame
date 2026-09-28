@@ -1,42 +1,53 @@
 package world
 
-type Resources struct {
-	Metal, Crystal, Deuterium int
-}
+type Resources struct{ Metal, Crystal, Deuterium int }
+
+func (r Resources) Add(x Resources) Resources { return Resources{r.Metal+x.Metal,r.Crystal+x.Crystal,r.Deuterium+x.Deuterium} }
+func (r Resources) Enough(x Resources) bool { return r.Metal>=x.Metal && r.Crystal>=x.Crystal && r.Deuterium>=x.Deuterium }
+func (r Resources) Sub(x Resources) Resources { return Resources{r.Metal-x.Metal,r.Crystal-x.Crystal,r.Deuterium-x.Deuterium} }
 
 type Buildings struct {
 	MetalMine, CrystalMine, DeuteriumExtractor int
-	Infrastructure, ResearchLab, Shipyard      int
-	DefenseGrid                                int
+	Infrastructure, ResearchLab, Shipyard, DefenseGrid int
 }
-
+type Tech struct{ Industry, Propulsion, Weapons, Shields, Sensors, Colonization int }
+type Queue struct { Kind string; Level, Quantity, Progress, Required int; Paid Resources }
+type Ships map[string]int
 type Planet struct {
-	ID        string
-	SystemID  string
-	Slot      int
-	OwnerID   string
+	ID, SystemID, OwnerID string
+	Slot int
 	Homeworld bool
 	Resources Resources
 	Buildings Buildings
+	Construction, ShipyardQueue *Queue
+	Ships Ships
 }
-
-type System struct {
-	ID        string
-	Neighbors []string
-	Planets   []string
+type System struct{ ID string; Neighbors, Planets []string; Debris Resources }
+type Fleet struct {
+	ID, OwnerID, SystemID string
+	Ships Ships
+	Cargo Resources
+	Route []string
+	RouteIndex int
+	Mission, Target string
 }
-
 type Empire struct {
-	ID          string
-	Name        string
-	HomeworldID string
-	Eliminated  bool
+	ID, Name, HomeworldID string
+	Eliminated, Exile bool
+	Tech Tech
+	Research *Queue
+	AllianceID string
 }
-
+type Message struct{ Turn int; From, To, Body string; Major bool }
+type Event struct{ Turn int `json:"turn"`; Type, EmpireID, Target, Detail string `json:"type,omitempty"` }
 type World struct {
-	Seed     int64
-	Turn     int
-	Systems  map[string]*System
-	Planets  map[string]*Planet
-	Empires  map[string]*Empire
+	Seed int64
+	Turn int
+	Systems map[string]*System
+	Planets map[string]*Planet
+	Empires map[string]*Empire
+	Fleets map[string]*Fleet
+	Messages []Message
+	Events []Event
+	NextFleet int
 }
