@@ -11,7 +11,12 @@ export class UniverseLibrary {
     const fs=new VFSFileSystem({root:"/agame"});
     await fs.init(); await fs.promises.mkdir("/library",{recursive:true});
     const x=new UniverseLibrary(fs);
-    try { await fs.promises.stat("/library/.git"); } catch { await git.init({fs,dir:"/library",defaultBranch:"main"}); }
+    try { await fs.promises.stat("/library/.git"); } catch {
+      await git.init({fs,dir:"/library",defaultBranch:"main"});
+      await fs.promises.writeFile("/library/library.json",new TextEncoder().encode('{"format":1}'));
+      await git.add({fs,dir:"/library",filepath:"library.json"});
+      await git.commit({fs,dir:"/library",message:"Initialize AGame library",author:{name:"AGame Browser",email:"browser@agame.local"}});
+    }
     return x;
   }
   branchName(id,name) { return "universe/"+id+"-"+slug(name); }
