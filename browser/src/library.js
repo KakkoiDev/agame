@@ -1,11 +1,11 @@
 import git from "isomorphic-git";
-import { VFSFileSystem } from "@componentor/fs";
+import LightningFS from "@isomorphic-git/lightning-fs";
 import { GitHubRemote } from "./jikko-github.js";
 
 export class UniverseLibrary {
   constructor(fs, dir="/library") { this.fs=fs; this.dir=dir; this.remote=null; }
   static async open() {
-    const fs=new VFSFileSystem({root:"/agame"}); await fs.init();
+    const fs=new LightningFS("agame",{wipe:false});
     await fs.promises.mkdir("/library",{recursive:true}); await fs.promises.mkdir("/sync",{recursive:true});
     const x=new UniverseLibrary(fs);
     try { await fs.promises.stat("/library/.git"); } catch {
