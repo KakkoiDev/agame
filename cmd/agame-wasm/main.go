@@ -108,7 +108,9 @@ func summary(_ js.Value, args []js.Value) any {
 		Empires []empire `json:"empires"`
 	}{Seed: w.Seed, Turn: w.Turn}
 	ids := make([]string, 0, len(w.Empires))
-	for id := range w.Empires {\n\t\tids = append(ids, id)\n\t}
+	for id := range w.Empires {
+	\tids = append(ids, id)
+	}
 	sort.Strings(ids)
 	for _, id := range ids {
 		e := w.Empires[id]
@@ -116,10 +118,16 @@ func summary(_ js.Value, args []js.Value) any {
 		for _, p := range w.Planets {
 			if p.OwnerID == e.ID {
 				x.Planets++
-				x.Metal += p.Resources.Metal\n\t\t\t\tx.Crystal += p.Resources.Crystal\n\t\t\t\tx.Deuterium += p.Resources.Deuterium
+				x.Metal += p.Resources.Metal
+	\t\t\tx.Crystal += p.Resources.Crystal
+	\t\t\tx.Deuterium += p.Resources.Deuterium
 			}
 		}
-		for _, f := range w.Fleets {\n\t\t\tif f.OwnerID == e.ID {\n\t\t\t\tx.Fleets++\n\t\t\t}\n\t\t}
+		for _, f := range w.Fleets {
+	\t\tif f.OwnerID == e.ID {
+	\t\t\tx.Fleets++
+	\t\t}
+	\t}
 		out.Empires = append(out.Empires, x)
 	}
 	return encode(out)
