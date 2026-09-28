@@ -126,6 +126,13 @@ Jikko accepts provider-neutral Git authentication from its caller. AGame owns Gi
 ## D41 — ZIP remains an independent portability path
 Repository synchronization provides convenient continuous backup of the library. A universe ZIP remains the provider-independent single-universe export/import format.
 
+
+## D42 — Static-browser GitHub sync uses Jikko's GitHub REST transport
+GitHub's Git smart-HTTP endpoints do not provide the CORS behavior required for direct browser isomorphic-git synchronization without a proxy. AGame must not send private save credentials through a public CORS proxy. For GitHub, the static browser therefore uses Jikko's browser-safe Git Database REST transport to create trees/commits and move `universe/*` refs atomically. Local history remains ordinary isomorphic-git in OPFS; AGame still owns universe branch semantics.
+
+## D43 — GitHub credentials are ephemeral by default
+The first browser UI accepts a GitHub credential only for the active page lifetime and passes it directly to the Jikko transport. It is not written to OPFS, Web Storage, universe files, commits, or exports. A future OAuth/device-flow UI may replace manual credential entry without changing storage semantics.
+
 # Status
 
 **There are no unresolved v1 questions from the original pre-implementation list.**

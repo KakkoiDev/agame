@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AGame</title><link rel="manifest" href="manifest.webmanifest">
+<style>body{font:16px system-ui;max-width:900px;margin:auto;padding:24px;background:#111;color:#eee}section{border:1px solid #333;border-radius:12px;padding:16px;margin:16px 0}input,button{font:inherit;padding:10px;margin:4px}button{cursor:pointer}table{width:100%;border-collapse:collapse}td,th{padding:8px;border-bottom:1px solid #333;text-align:left}.game{display:block;width:100%;text-align:left}.muted{color:#aaa}</style></head>
+<body><h1>AGame</h1><p class="muted">Local-first persistent AI strategy universe</p>
+<section><h2>Universes</h2><div id="games">Loading…</div><form id="new-game"><input id="name" placeholder="Universe name" required><input id="seed" type="number" value="1" aria-label="Seed"><button>Create game</button></form></section>
+<section id="play" hidden><h2 id="turn"></h2><table><thead><tr><th>Empire</th><th>Planets</th><th>Status</th></tr></thead><tbody id="empires"></tbody></table><button id="advance">Advance one month</button></section>
+<section><h2>GitHub backup</h2><p class="muted">Optional. The game remains playable offline. Token is kept only for this browser session.</p><form id="connect"><input id="remote" type="url" placeholder="https://github.com/you/agame-saves.git" required><input id="token" type="password" placeholder="GitHub token" required><button>Connect</button></form><button id="sync">Back up now</button></section>
+<p id="status" role="status">Ready.</p>
+<script src="wasm_exec.js"></script><script>const go=new Go();WebAssembly.instantiateStreaming(fetch("agame.wasm"),go.importObject).then(r=>go.run(r.instance));</script>
+<script type="module" src="dist/app.js"></script></body></html>

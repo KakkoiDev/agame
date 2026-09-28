@@ -12,6 +12,19 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.24.x'
-      - run: gofmt -w .
+      - name: Format new browser Go code
+        run: |
+          test -z "$(gofmt -l cmd/agame-wasm)"
       - run: go vet ./...
       - run: go test -race ./...
+      - name: Browser WASM build
+        run: GOOS=js GOARCH=wasm go build -o /tmp/agame.wasm ./cmd/agame-wasm
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Browser bundle
+        working-directory: browser
+        run: |
+          npm install --ignore-scripts --package-lock=false
+          npm run check
+          npm run build
