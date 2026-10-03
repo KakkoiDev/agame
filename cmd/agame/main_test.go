@@ -305,3 +305,35 @@ func TestDashboardShowsDiplomacyBattlesAndRejections(t *testing.T) {
 		t.Fatal("end not shown")
 	}
 }
+
+func TestDashboardDecisionsFilterAndObservation(t *testing.T) {
+	s := run.Store{Dir: filepath.Join(t.TempDir(), "run")}
+	ctx := context.Background()
+	var out strings.Builder
+	if err := command(ctx, s, "new", []string{"4"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if err := command(ctx, s, "run", []string{"5"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	h := dashboard(s)
+	body := get(h, "GET", "/").Body.String()
+	for _, want := range []string{"Last turn decisions", "autopilot", `href="/observe?empire=e03&amp;turn=4"`, `href="/?empire=e02"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("dashboard lacks %q:\n%s", want, body)
+		}
+	}
+	f := get(h, "GET", "/?empire=e02").Body.String()
+	if !strings.Contains(f, "showing Aya") || strings.Contains(f, `observe?empire=e03&amp;turn`) || !strings.Contains(f, `observe?empire=e02&amp;turn=4`) {
+		t.Fatalf("filtered dashboard:\n%s", f)
+	}
+	rec := get(h, "GET", "/observe?empire=e03&turn=2")
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "Kael at turn 2") || !strings.Contains(rec.Body.String(), "turn 2; you are e03") {
+		t.Fatalf("observe %d:\n%s", rec.Code, rec.Body.String())
+	}
+	for path, code := range map[string]int{"/observe?empire=e99&turn=1": 404, "/observe?empire=e03&turn=x": 400, "/observe?empire=e03&turn=99": 404} {
+		if c := get(h, "GET", path).Code; c != code {
+			t.Fatalf("%s -> %d, want %d", path, c, code)
+		}
+	}
+}
