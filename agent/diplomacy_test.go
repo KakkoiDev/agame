@@ -80,7 +80,9 @@ func TestObserveEspionageAndBattlesArePrivate(t *testing.T) {
 	types := func(eid string) string {
 		var ts []string
 		for _, e := range Observe(w, eid).Events {
-			ts = append(ts, e.Type)
+			if e.Type != "production" { // everyone sees its own production
+				ts = append(ts, e.Type)
+			}
 		}
 		return strings.Join(ts, ",")
 	}

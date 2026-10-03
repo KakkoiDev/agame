@@ -187,6 +187,15 @@ func TestRunReplayAndResult(t *testing.T) {
 		t.Fatalf("replay: %v %s", err, out.String())
 	}
 	out.Reset()
+	if err := command(ctx, s, "observe", []string{"e02", "3"}, &out); err != nil || !strings.Contains(out.String(), "turn 3; you are e02") {
+		t.Fatalf("observe: %v %s", err, out.String())
+	}
+	for _, bad := range [][]string{{"e02"}, {"e02", "x"}, {"e02", "40"}, {"e99", "1"}} {
+		if err := command(ctx, s, "observe", bad, &out); err == nil {
+			t.Fatalf("observe %v accepted", bad)
+		}
+	}
+	out.Reset()
 	if err := command(ctx, s, "run", []string{"10"}, &out); err != nil {
 		t.Fatal(err)
 	}
@@ -206,6 +215,24 @@ func TestRunReplayAndResult(t *testing.T) {
 	}
 	if err := s.ReadJSONL(run.DecisionsFile, func([]byte) error { n++; return nil }); err != nil || n != want || n < 40 {
 		t.Fatalf("decision records %d %v", n, err)
+	}
+	// A tampered event log fails the replay.
+	ev := filepath.Join(s.Dir, run.EventsFile)
+	orig, _ := os.ReadFile(ev)
+	if err := os.WriteFile(ev, []byte(strings.Replace(string(orig), "production", "prodution", 1)), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := command(ctx, s, "replay", nil, &out); err == nil || !strings.Contains(err.Error(), "diverges") {
+		t.Fatalf("tampered event log replayed: %v", err)
+	}
+	if err := os.WriteFile(ev, append(orig, orig[:strings.Index(string(orig), "\n")+1]...), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := command(ctx, s, "replay", nil, &out); err == nil || !strings.Contains(err.Error(), "entries") {
+		t.Fatalf("extra event log entry replayed: %v", err)
+	}
+	if err := os.WriteFile(ev, orig, 0644); err != nil {
+		t.Fatal(err)
 	}
 	// A world that does not match its log fails the replay.
 	w, _ := s.Load()

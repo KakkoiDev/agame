@@ -138,7 +138,7 @@ func defendingFleets(w *World, owner, system string) []*Fleet {
 
 // battleBookkeeping records hostility, stats and the battle event shared by
 // planet and fleet battles. A battle against an ally is a treaty breach (D23).
-func battleBookkeeping(w *World, a *Fleet, def, target string, rounds, attLost, defLost int) {
+func battleBookkeeping(w *World, a *Fleet, def, target string, rounds, attLost, defLost int, debris Resources) {
 	breachIfAllied(w, a.OwnerID, def, "battle at "+target)
 	recordHostility(w, a.OwnerID, def)
 	ea, ed := w.Empires[a.OwnerID], w.Empires[def]
@@ -149,7 +149,7 @@ func battleBookkeeping(w *World, a *Fleet, def, target string, rounds, attLost, 
 	ed.Stats.ShipsLost += defLost
 	ed.Stats.ShipsDestroyed += attLost
 	w.emit(Event{Type: "battle", EmpireID: a.OwnerID, Target: target, Other: def,
-		Detail: fmt.Sprintf("defender=%s rounds=%d attacker_lost=%d defender_lost=%d", def, rounds, attLost, defLost)})
+		Detail: fmt.Sprintf("defender=%s rounds=%d attacker_lost=%d defender_lost=%d debris=%d/%d at %s", def, rounds, attLost, defLost, debris.Metal, debris.Crystal, a.SystemID)})
 }
 
 // retreat sends a surviving, non-capturing attacker back to the route node it
@@ -199,9 +199,8 @@ func combat(w *World, a *Fleet, prevNode string, capturedThisTurn map[string]boo
 	}
 
 	rounds := fight(battleRNG(w, p.ID, a.ID), attackers, defenders, batteries, shot)
-	attLost := removeDestroyed(w, p.SystemID, attackers)
-	defLost := removeDestroyed(w, p.SystemID, defenders)
-	battleBookkeeping(w, a, def, p.ID, rounds, attLost, defLost)
+	attLost, defLost, debris := battleLosses(w, p.SystemID, attackers, defenders)
+	battleBookkeeping(w, a, def, p.ID, rounds, attLost, defLost, debris)
 
 	defenderLeft := p.Ships.Count()
 	for _, f := range defFleets {
@@ -249,9 +248,8 @@ func fleetCombat(w *World, a, t *Fleet, prevNode string) {
 		defenders = enlist(defenders, f.Ships, defTech)
 	}
 	rounds := fight(battleRNG(w, t.ID, a.ID), attackers, defenders, 0, 0)
-	attLost := removeDestroyed(w, a.SystemID, attackers)
-	defLost := removeDestroyed(w, a.SystemID, defenders)
-	battleBookkeeping(w, a, def, t.ID, rounds, attLost, defLost)
+	attLost, defLost, debris := battleLosses(w, a.SystemID, attackers, defenders)
+	battleBookkeeping(w, a, def, t.ID, rounds, attLost, defLost, debris)
 	left := 0
 	for _, f := range defFleets {
 		left += f.Ships.Count()
@@ -264,6 +262,12 @@ func fleetCombat(w *World, a, t *Fleet, prevNode string) {
 // removeDestroyed takes destroyed ships out of their docks and leaves their
 // debris in the system. It returns the number of ships destroyed.
 func removeDestroyed(w *World, system string, units []*combatant) int {
+	n, _ := removeDestroyedDebris(w, system, units)
+	return n
+}
+
+// removeDestroyedDebris is removeDestroyed that also returns the debris left.
+func removeDestroyedDebris(w *World, system string, units []*combatant) (int, Resources) {
 	var cost Resources
 	lost := 0
 	for _, u := range units {
@@ -279,10 +283,19 @@ func removeDestroyed(w *World, system string, units []*combatant) int {
 		cost.Metal += c.Metal
 		cost.Crystal += c.Crystal
 	}
+	d := debrisFor(cost)
 	if s := w.Systems[system]; s != nil {
-		s.Debris = s.Debris.Add(debrisFor(cost))
+		s.Debris = s.Debris.Add(d)
 	}
-	return lost
+	return lost, d
+}
+
+// battleLosses removes both sides' destroyed ships and returns the losses and
+// the total debris left in the system.
+func battleLosses(w *World, system string, attackers, defenders []*combatant) (int, int, Resources) {
+	al, ad := removeDestroyedDebris(w, system, attackers)
+	dl, dd := removeDestroyedDebris(w, system, defenders)
+	return al, dl, ad.Add(dd)
 }
 
 // debrisFor is DebrisPercent of a destroyed cost's metal and crystal, rounded

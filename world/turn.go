@@ -329,13 +329,23 @@ func progressQueues(w *World) {
 		}
 	}
 }
+
+// produce pays every owned planet its yield and records one production
+// event per empire.
 func produce(w *World) {
-	for _, p := range w.Planets {
+	total := map[string]Resources{}
+	for _, id := range sortedKeys(w.Planets) {
+		p := w.Planets[id]
 		if p.OwnerID == "" {
 			continue
 		}
 		pr := Production(w, p)
 		p.Resources = p.Resources.Add(pr)
+		total[p.OwnerID] = total[p.OwnerID].Add(pr)
+	}
+	for _, id := range sortedKeys(total) {
+		t := total[id]
+		w.emit(Event{Type: "production", EmpireID: id, Detail: fmt.Sprintf("metal=%d crystal=%d deuterium=%d", t.Metal, t.Crystal, t.Deuterium)})
 	}
 }
 

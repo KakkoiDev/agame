@@ -1,6 +1,7 @@
 package world
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -475,5 +476,31 @@ func TestPlanetlessEmpireResearchWaits(t *testing.T) {
 	r := resolve(t, w)
 	if w.Empires["e01"].Research.Progress != 0 || len(eventsOfType(r, "research_complete")) != 0 {
 		t.Fatalf("research progressed without planets: %+v", w.Empires["e01"].Research)
+	}
+}
+
+func TestProductionAndBattleDebrisAreLogged(t *testing.T) {
+	w := newTestWorld(t, 1)
+	want := Production(w, home(w, "e03"))
+	r := resolve(t, w)
+	found := false
+	for _, e := range eventsOfType(r, "production") {
+		if e.EmpireID == "e03" {
+			found = e.Detail == fmt.Sprintf("metal=%d crystal=%d deuterium=%d", want.Metal, want.Crystal, want.Deuterium)
+		}
+	}
+	if !found || len(eventsOfType(r, "production")) != 8 {
+		t.Fatalf("production events %+v", eventsOfType(r, "production"))
+	}
+	f, target := stageAttack(t, w, map[string]int{ShipFrigate: 3})
+	target.Ships = Ships{ShipFrigate: 1}
+	r = resolve(t, w, Order{EmpireID: "e00", Type: OrderAttack, Actor: f.ID, Target: target.ID})
+	for f.Route != nil {
+		r = resolve(t, w)
+	}
+	b := eventsOfType(r, "battle")
+	d := w.Systems[target.SystemID].Debris
+	if len(b) != 1 || !strings.Contains(b[0].Detail, fmt.Sprintf("debris=%d/%d at %s", d.Metal, d.Crystal, target.SystemID)) || d == (Resources{}) {
+		t.Fatalf("battle %+v debris %+v", b, d)
 	}
 }

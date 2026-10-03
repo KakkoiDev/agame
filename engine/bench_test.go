@@ -210,6 +210,28 @@ func TestReplayReproducesARunAndDetectsTampering(t *testing.T) {
 	if world.StateHash(final) != world.StateHash(w) || initial.Turn != 0 {
 		t.Fatal("replay diverged or mutated the initial state")
 	}
+	// What a ruler knew at turn 12 is reproducible and matches its record.
+	w2, _ := Clone(initial)
+	r2 := &Runner{World: w2, Agents: observationAutopilots()}
+	var hashAt12 string
+	for i := 0; i <= 12; i++ {
+		rec, _ := r2.Step(context.Background())
+		for _, d := range rec.Decisions {
+			if i == 12 && d.Empire == "e03" {
+				hashAt12 = d.PromptHash
+			}
+		}
+	}
+	o, err := ObservationAt(initial, log, 12, "e03")
+	if err != nil || o.Turn != 12 || hashAt12 == "" || agent.PromptHash(o) != hashAt12 {
+		t.Fatalf("observation at 12: turn %d err %v", o.Turn, err)
+	}
+	if _, err := ObservationAt(initial, log, 99, "e03"); err == nil {
+		t.Fatal("turn outside the log")
+	}
+	if _, err := ObservationAt(initial, log, 3, "e42"); err == nil {
+		t.Fatal("unknown empire")
+	}
 	log[10].Submitted = nil
 	if _, err := Replay(initial, log); err == nil || !strings.Contains(err.Error(), "turn 10") {
 		t.Fatalf("tampered orders not detected: %v", err)

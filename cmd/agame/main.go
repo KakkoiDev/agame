@@ -24,7 +24,7 @@ import (
 
 var names = []string{"Cassian", "Malrec", "Aya", "Kael", "Iona", "Talos", "Nara", "Orion"}
 
-const usage = "usage: agame [new [seed] | turn | run N | replay | serve]"
+const usage = "usage: agame [new [seed] | turn | run N | replay | observe EMPIRE TURN | serve]"
 
 func main() {
 	flag.Parse()
@@ -86,6 +86,27 @@ func command(ctx context.Context, s run.Store, cmd string, args []string, out io
 		return err
 	case "replay":
 		return replay(s, out)
+	case "observe":
+		if len(args) != 2 {
+			return fmt.Errorf("usage: agame observe EMPIRE TURN")
+		}
+		turn, err := strconv.Atoi(args[1])
+		if err != nil {
+			return fmt.Errorf("invalid turn %q", args[1])
+		}
+		var initial world.World
+		if err := s.LoadJSON(run.InitialFile, &initial); err != nil {
+			return err
+		}
+		turns, err := s.Turns()
+		if err != nil {
+			return err
+		}
+		o, err := engine.ObservationAt(&initial, turns, turn, args[0])
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "prompt %s\n%s", agent.PromptHash(o), agent.Prompt(o))
 	default:
 		return fmt.Errorf("%s", usage)
 	}
@@ -206,6 +227,24 @@ func replay(s run.Store, out io.Writer) error {
 	if err != nil {
 		return err
 	}
+	// The append-only event log must be exactly the replayed events.
+	var logged []string
+	if err := s.ReadJSONL(run.EventsFile, func(b []byte) error { logged = append(logged, string(b)); return nil }); err != nil {
+		return err
+	}
+	n := 0
+	for _, t := range turns {
+		for _, e := range t.Events {
+			b, _ := json.Marshal(e)
+			if n >= len(logged) || logged[n] != string(b) {
+				return fmt.Errorf("%s diverges from the replay at entry %d (turn %d)", run.EventsFile, n+1, t.Turn)
+			}
+			n++
+		}
+	}
+	if n != len(logged) {
+		return fmt.Errorf("%s has %d entries, the replay produced %d", run.EventsFile, len(logged), n)
+	}
 	saved, err := s.Load()
 	if err != nil {
 		return err
@@ -214,7 +253,7 @@ func replay(s run.Store, out io.Writer) error {
 	if got != want {
 		return fmt.Errorf("replayed %d turns to state %s, but %s has %s", len(turns), got, run.WorldFile, want)
 	}
-	fmt.Fprintf(out, "replayed %d turns; final state %s matches %s\n", len(turns), got, run.WorldFile)
+	fmt.Fprintf(out, "replayed %d turns and %d events; final state %s matches %s\n", len(turns), n, got, run.WorldFile)
 	return nil
 }
 

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/KakkoiDev/agame/agent"
 	"github.com/KakkoiDev/agame/world"
 )
 
@@ -50,4 +51,22 @@ func Clone(w *world.World) (*world.World, error) {
 		return nil, err
 	}
 	return &c, nil
+}
+
+// ObservationAt replays the log up to the start of turn and returns what
+// empire eid observed then: the ruler's historical knowledge, as opposed to
+// today's world truth. Its agent.PromptHash matches the decision record of
+// that turn.
+func ObservationAt(initial *world.World, turns []world.TurnResult, turn int, eid string) (agent.Observation, error) {
+	if turn < 0 || turn > len(turns) {
+		return agent.Observation{}, fmt.Errorf("turn %d is outside the log (0..%d)", turn, len(turns))
+	}
+	w, err := Replay(initial, turns[:turn])
+	if err != nil {
+		return agent.Observation{}, err
+	}
+	if w.Empires[eid] == nil {
+		return agent.Observation{}, fmt.Errorf("unknown empire %q", eid)
+	}
+	return agent.Observe(w, eid), nil
 }
