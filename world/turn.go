@@ -1,6 +1,7 @@
 package world
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 )
@@ -54,8 +55,8 @@ func ResolveTurn(w *World, submitted map[string][]Order) (TurnResult, error) {
 	reject := func(submitter string, o Order, err error) {
 		r := Rejection{Order: o, Reason: err.Error()}
 		res.Rejected = append(res.Rejected, r)
-		if e := w.Empires[submitter]; e != nil {
-			e.Rejected = append(e.Rejected, r)
+		if e := w.Empires[submitter]; e != nil && len(e.Rejected) < MaxFeedbackRejections {
+			e.Rejected = append(e.Rejected, boundedRejection(r))
 		}
 	}
 	var valid []Order
@@ -99,6 +100,28 @@ func ResolveTurn(w *World, submitted map[string][]Order) (TurnResult, error) {
 	res.Events = append(res.Events, w.Events[firstEvent:]...)
 	res.StateHash = StateHash(w)
 	return res, nil
+}
+
+// Bounds on the rejection feedback kept in S(t+1): it reaches the ruler's
+// next observation, so a runaway agent must not be able to bloat the state.
+const (
+	MaxFeedbackRejections = 32
+	MaxFeedbackParamBytes = 512
+)
+
+func boundedRejection(r Rejection) Rejection {
+	if b, err := json.Marshal(r.Params); err != nil || len(b) > MaxFeedbackParamBytes {
+		r.Params = map[string]any{"omitted": "params too large to echo back"}
+	}
+	for _, x := range []struct {
+		s *string
+		n int
+	}{{&r.Actor, 64}, {&r.Target, 64}, {&r.Type, 64}, {&r.Reason, 300}} {
+		if len(*x.s) > x.n {
+			*x.s = (*x.s)[:x.n] + "…"
+		}
+	}
+	return r
 }
 
 // cloneWorld copies what validation reads and application mutates in place.

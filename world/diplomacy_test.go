@@ -577,3 +577,20 @@ func TestFleetCanBeRedirectedAtARouteNode(t *testing.T) {
 	}
 	rejectedWith(t, resolve(t, w, Order{EmpireID: "e00", Type: OrderMove, Actor: f.ID, Target: f.SystemID}), "already in")
 }
+
+func TestRejectionFeedbackIsBounded(t *testing.T) {
+	w := newTestWorld(t, 1)
+	var orders []Order
+	for i := 0; i < MaxFeedbackRejections+10; i++ {
+		orders = append(orders, Order{EmpireID: "e00", Type: OrderConstruct, Actor: strings.Repeat("x", 1000), Target: "casino",
+			Params: map[string]any{"junk": strings.Repeat("y", 2000)}})
+	}
+	r := resolve(t, w, orders...)
+	if len(r.Rejected) != len(orders) || len(r.Rejected[0].Params["junk"].(string)) != 2000 {
+		t.Fatal("the turn result must keep the full submission")
+	}
+	rj := w.Empires["e00"].Rejected
+	if len(rj) != MaxFeedbackRejections || rj[0].Params["junk"] != nil || len(rj[0].Actor) > 70 || len(rj[0].Reason) > 310 || !strings.Contains(rj[0].Reason, "unknown planet") {
+		t.Fatalf("feedback %d %+v", len(rj), rj[0])
+	}
+}
