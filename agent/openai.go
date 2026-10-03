@@ -1,8 +1,79 @@
 package agent
 
-import("bytes";"context";"encoding/json";"fmt";"io";"net/http";"strings")
-type OpenAICompatible struct{Endpoint,APIKey,Model string;Client *http.Client}
-func(a OpenAICompatible)Decide(ctx context.Context,o Observation)(Decision,error){obs,err:=json.Marshal(o);if err!=nil{return Decision{},err};schema:=`Return JSON only: {"orders":[],"statement":"..."}. Choose zero or more legal AGame orders. Never invent IDs.`;body:=map[string]any{"model":a.Model,"temperature":0.3,"messages":[]map[string]string{{"role":"system","content":schema},{"role":"user","content":string(obs)}}};b,err:=json.Marshal(body);if err!=nil{return Decision{},err};url:=strings.TrimRight(a.Endpoint,"/")+"/v1/chat/completions";req,err:=http.NewRequestWithContext(ctx,"POST",url,bytes.NewReader(b));if err!=nil{return Decision{},fmt.Errorf("model request: %w",err)};req.Header.Set("Content-Type","application/json");if a.APIKey!=""{req.Header.Set("Authorization","Bearer "+a.APIKey)};c:=a.Client;if c==nil{c=http.DefaultClient};resp,err:=c.Do(req);if err!=nil{return Decision{},err};defer resp.Body.Close();if resp.StatusCode/100!=2{return Decision{},fmt.Errorf("model HTTP %s",resp.Status)};var out struct{Choices []struct{Message struct{Content string `json:"content"`} `json:"message"`} `json:"choices"`};if err=json.NewDecoder(io.LimitReader(resp.Body,maxModelResponse)).Decode(&out);err!=nil||len(out.Choices)==0{return Decision{},fmt.Errorf("invalid model response")};return ParseDecision(out.Choices[0].Message.Content)}
-const maxModelResponse=8<<20
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+)
+
+type OpenAICompatible struct {
+	Endpoint, APIKey, Model string
+	Client                  *http.Client
+}
+
+func (a OpenAICompatible) Decide(ctx context.Context, o Observation) (Decision, error) {
+	obs, err := json.Marshal(o)
+	if err != nil {
+		return Decision{}, err
+	}
+	schema := `Return JSON only: {"orders":[],"statement":"..."}. Choose zero or more legal AGame orders. Never invent IDs.`
+	body := map[string]any{"model": a.Model, "temperature": 0.3, "messages": []map[string]string{{"role": "system", "content": schema}, {"role": "user", "content": string(obs)}}}
+	b, err := json.Marshal(body)
+	if err != nil {
+		return Decision{}, err
+	}
+	url := strings.TrimRight(a.Endpoint, "/") + "/v1/chat/completions"
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(b))
+	if err != nil {
+		return Decision{}, fmt.Errorf("model request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if a.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+a.APIKey)
+	}
+	c := a.Client
+	if c == nil {
+		c = http.DefaultClient
+	}
+	resp, err := c.Do(req)
+	if err != nil {
+		return Decision{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		return Decision{}, fmt.Errorf("model HTTP %s", resp.Status)
+	}
+	var out struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if err = json.NewDecoder(io.LimitReader(resp.Body, maxModelResponse)).Decode(&out); err != nil || len(out.Choices) == 0 {
+		return Decision{}, fmt.Errorf("invalid model response")
+	}
+	return ParseDecision(out.Choices[0].Message.Content)
+}
+
+const maxModelResponse = 8 << 20
+
 // ParseDecision decodes a model's decision envelope, tolerating the Markdown code fences and short preambles small models commonly add around the JSON object.
-func ParseDecision(content string)(Decision,error){var d Decision;s:=strings.TrimSpace(content);if err:=json.Unmarshal([]byte(s),&d);err==nil{return d,nil};if i,j:=strings.Index(s,"{"),strings.LastIndex(s,"}");i>=0&&j>i{var x Decision;if err:=json.Unmarshal([]byte(s[i:j+1]),&x);err==nil{return x,nil}};return Decision{},fmt.Errorf("model output is not a decision JSON object")}
+func ParseDecision(content string) (Decision, error) {
+	var d Decision
+	s := strings.TrimSpace(content)
+	if err := json.Unmarshal([]byte(s), &d); err == nil {
+		return d, nil
+	}
+	if i, j := strings.Index(s, "{"), strings.LastIndex(s, "}"); i >= 0 && j > i {
+		var x Decision
+		if err := json.Unmarshal([]byte(s[i:j+1]), &x); err == nil {
+			return x, nil
+		}
+	}
+	return Decision{}, fmt.Errorf("model output is not a decision JSON object")
+}
