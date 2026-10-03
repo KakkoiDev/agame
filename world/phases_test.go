@@ -162,34 +162,6 @@ func TestOrderForUnknownEmpireOrEmptyTypeRejected(t *testing.T) {
 	}
 }
 
-func TestFleetInTransitCannotBeRedirected(t *testing.T) {
-	w := newTestWorld(t, 4)
-	p := home(w, "e00")
-	f := formFleet(t, w, map[string]int{"scout": 1})
-	p.Resources.Deuterium = 1000
-	var far string
-	for _, id := range systemIDs(w) {
-		if distance(w, f.SystemID, id) >= 3 {
-			far = id
-			break
-		}
-	}
-	resolve(t, w, Order{EmpireID: "e00", Type: "move", Actor: f.ID, Target: far})
-	if len(f.Route) == 0 {
-		t.Fatal("fleet should still be in transit")
-	}
-	r := resolve(t, w, Order{EmpireID: "e00", Type: "move", Actor: f.ID, Target: p.SystemID})
-	if len(r.Accepted) != 0 {
-		t.Fatal("in-transit fleet accepted a new mission")
-	}
-	for i := 0; i < 10 && len(f.Route) > 0; i++ {
-		resolve(t, w)
-	}
-	if f.SystemID != far || f.Mission != "" {
-		t.Fatalf("fleet at %s mission %q, want arrival at %s", f.SystemID, f.Mission, far)
-	}
-}
-
 func TestPropulsionSpeedAndFuelDiscount(t *testing.T) {
 	w := newTestWorld(t, 4)
 	p := home(w, "e00")

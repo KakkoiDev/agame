@@ -137,8 +137,19 @@ func TestCombatInPlaceStalemateHasNoRetreat(t *testing.T) {
 	f.SystemID = target.SystemID
 	target.Ships[ShipTransport] = 1
 	r := resolve(t, w, Order{EmpireID: "e00", Type: OrderAttack, Actor: f.ID, Target: target.ID})
-	if rp := eventsOfType(r, "attack_repulsed"); len(rp) != 1 || rp[0].Detail != "no retreat" || f.SystemID != target.SystemID {
+	if rp := eventsOfType(r, "attack_repulsed"); len(rp) != 1 || !strings.HasPrefix(rp[0].Detail, "no retreat") || f.SystemID != target.SystemID || !f.Blocked {
 		t.Fatalf("events=%+v at %s", r.Events, f.SystemID)
+	}
+	// spec/game.md: a blocked attacker must depart next turn; it may not
+	// attack again from where it stands.
+	f.Cargo.Deuterium = 100
+	r = resolve(t, w, Order{EmpireID: "e00", Type: OrderAttack, Actor: f.ID, Target: target.ID})
+	if len(r.Rejected) != 1 || !strings.Contains(r.Rejected[0].Reason, "blocked") {
+		t.Fatalf("blocked fleet attacked again: %+v", r)
+	}
+	r = resolve(t, w, Order{EmpireID: "e00", Type: OrderMove, Actor: f.ID, Target: w.Systems[f.SystemID].Neighbors[0]})
+	if len(r.Accepted) != 1 || f.Blocked {
+		t.Fatalf("blocked fleet could not leave: %+v", r.Rejected)
 	}
 }
 

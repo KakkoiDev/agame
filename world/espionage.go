@@ -53,6 +53,10 @@ func IntelTier(intel int) int {
 	return 3
 }
 
+// SpyRange is how many route edges a scout can observe across: its own
+// system and adjacent ones, plus one more edge per 3 Sensors levels (D53).
+func SpyRange(sensors int) int { return 1 + max(0, sensors)/3 }
+
 // DetectionChance is the percent chance that the spied-on empire detects the
 // scout: 50 - 15 x intel, clamped to 5..95 (D53).
 func DetectionChance(intel int) int {
@@ -100,7 +104,7 @@ func buildingBand(n int) string {
 
 func spy(w *World, f *Fleet) {
 	p := w.Planets[f.Target]
-	if p == nil || (p.SystemID != f.SystemID && !adjacent(w, f.SystemID, p.SystemID)) || f.Ships[ShipScout] == 0 {
+	if p == nil || distance(w, f.SystemID, p.SystemID) > SpyRange(w.Empires[f.OwnerID].Tech.Sensors) || f.Ships[ShipScout] == 0 {
 		w.emit(Event{Type: "spy_failed", EmpireID: f.OwnerID, Target: f.Target, Detail: f.ID})
 		return
 	}

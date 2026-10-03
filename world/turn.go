@@ -235,6 +235,8 @@ func resolveArrivals(w *World) {
 		case OrderTransport:
 			if w.Planets[f.Target] != nil {
 				deliver(w, f)
+			} else if t := w.Fleets[f.Target]; t != nil {
+				deliverToFleet(w, f, t)
 			} else {
 				w.emit(Event{Type: "fleet_arrived", EmpireID: f.OwnerID, Target: f.ID, Detail: "at " + f.SystemID + " with cargo"})
 			}
@@ -280,6 +282,33 @@ func deliver(w *World, f *Fleet) {
 	w.Empires[f.OwnerID].Stats.ResourcesSent += amount
 	w.Empires[p.OwnerID].Stats.ResourcesReceived += amount
 	w.emit(Event{Type: "transfer", EmpireID: f.OwnerID, Target: p.ID, Other: p.OwnerID, Detail: detail})
+}
+
+// deliverToFleet hands cargo to another fleet in the same system, up to the
+// receiver's free cargo room; what does not fit stays aboard (D62).
+func deliverToFleet(w *World, f, t *Fleet) {
+	if t.SystemID != f.SystemID || t.Ships.Count() == 0 {
+		w.emit(Event{Type: "transport_failed", EmpireID: f.OwnerID, Target: t.ID, Detail: f.ID + " did not find the fleet"})
+		return
+	}
+	room := cargoCapacity(t.Ships) - (t.Cargo.Metal + t.Cargo.Crystal + t.Cargo.Deuterium)
+	var c Resources
+	c.Deuterium = min(max(0, room), f.Cargo.Deuterium) // fuel first: it is what keeps a fleet alive
+	room -= c.Deuterium
+	c.Metal = min(max(0, room), f.Cargo.Metal)
+	room -= c.Metal
+	c.Crystal = min(max(0, room), f.Cargo.Crystal)
+	f.Cargo = f.Cargo.Sub(c)
+	t.Cargo = t.Cargo.Add(c)
+	detail := fmt.Sprintf("metal=%d crystal=%d deuterium=%d", c.Metal, c.Crystal, c.Deuterium)
+	if t.OwnerID == f.OwnerID {
+		w.emit(Event{Type: "cargo_delivered", EmpireID: f.OwnerID, Target: t.ID, Detail: detail})
+		return
+	}
+	amount := c.Metal + c.Crystal + c.Deuterium
+	w.Empires[f.OwnerID].Stats.ResourcesSent += amount
+	w.Empires[t.OwnerID].Stats.ResourcesReceived += amount
+	w.emit(Event{Type: "transfer", EmpireID: f.OwnerID, Target: t.ID, Other: t.OwnerID, Detail: detail})
 }
 
 func progressQueues(w *World) {

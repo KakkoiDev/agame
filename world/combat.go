@@ -155,8 +155,10 @@ func battleBookkeeping(w *World, a *Fleet, def, target string, rounds, attLost, 
 // retreat sends a surviving, non-capturing attacker back to the route node it
 // arrived from (D47), or leaves it in place if it attacked in place.
 func retreat(w *World, a *Fleet, prevNode, target string) {
-	detail := "no retreat"
+	detail := "no retreat; blocked until it moves out"
+	a.Blocked = true
 	if prevNode != "" && w.Systems[prevNode] != nil {
+		a.Blocked = false
 		a.SystemID = prevNode
 		detail = "retreated to " + prevNode
 	}

@@ -44,6 +44,9 @@ type Fleet struct {
 	Route                 []string
 	RouteIndex            int
 	Mission, Target       string
+	// Blocked marks an attacker left in place by a stalemate with no route
+	// to retreat along; it must move out before any other mission (D61).
+	Blocked bool `json:",omitempty"`
 }
 type Empire struct {
 	ID, Name, HomeworldID string

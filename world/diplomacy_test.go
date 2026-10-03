@@ -358,12 +358,15 @@ func TestSpyValidationAndDetection(t *testing.T) {
 	near := w.Planets[w.Systems[w.Systems[p.SystemID].Neighbors[0]].Planets[0]]
 	rejectedWith(t, resolve(t, w, Order{EmpireID: "e00", Type: OrderSpy, Actor: frig.ID, Target: near.ID}), "needs a scout")
 	rejectedWith(t, resolve(t, w, Order{EmpireID: "e00", Type: OrderSpy, Actor: scout.ID, Target: p.ID}), "your own")
-	rejectedWith(t, resolve(t, w, Order{EmpireID: "e00", Type: OrderSpy, Actor: scout.ID, Target: home(w, "e03").ID}), "not in or adjacent")
+	rejectedWith(t, resolve(t, w, Order{EmpireID: "e00", Type: OrderSpy, Actor: scout.ID, Target: home(w, "e03").ID}), "beyond spy range 1")
 	near.OwnerID = "e02"
 	r := resolve(t, w, Order{EmpireID: "e00", Type: OrderSpy, Actor: scout.ID, Target: near.ID})
 	accepted(t, r, 1)
 	if scout.SystemID != p.SystemID || len(eventsOfType(r, "espionage")) != 1 {
 		t.Fatal("a scout spies on an adjacent system without moving")
+	}
+	if SpyRange(0) != 1 || SpyRange(2) != 1 || SpyRange(3) != 2 || SpyRange(7) != 3 {
+		t.Fatal("spy range")
 	}
 	if DetectionChance(-10) != 95 || DetectionChance(10) != 5 || DetectionChance(0) != 50 || DetectionChance(1) != 35 {
 		t.Fatal("detection chance")
@@ -503,4 +506,74 @@ func TestProductionAndBattleDebrisAreLogged(t *testing.T) {
 	if len(b) != 1 || !strings.Contains(b[0].Detail, fmt.Sprintf("debris=%d/%d at %s", d.Metal, d.Crystal, target.SystemID)) || d == (Resources{}) {
 		t.Fatalf("battle %+v debris %+v", b, d)
 	}
+}
+
+func TestSensorsExtendSpyRange(t *testing.T) {
+	w := newTestWorld(t, 1)
+	scout := formFleet(t, w, map[string]int{ShipScout: 1})
+	var two *Planet
+	for _, id := range systemIDs(w) {
+		if distance(w, scout.SystemID, id) == 2 {
+			two = w.Planets[w.Systems[id].Planets[3]]
+			break
+		}
+	}
+	two.OwnerID = "e05"
+	rejectedWith(t, resolve(t, w, Order{EmpireID: "e00", Type: OrderSpy, Actor: scout.ID, Target: two.ID}), "beyond spy range 1")
+	w.Empires["e00"].Tech.Sensors = 3
+	r := resolve(t, w, Order{EmpireID: "e00", Type: OrderSpy, Actor: scout.ID, Target: two.ID})
+	if len(eventsOfType(r, "espionage")) != 1 {
+		t.Fatalf("sensors 3 cannot spy two edges away: %+v", r.Rejected)
+	}
+}
+
+func TestTransportToAFleetAidsAnExile(t *testing.T) {
+	w := newTestWorld(t, 1)
+	p := home(w, "e00")
+	p.Resources = Resources{1000, 1000, 1000}
+	f := formFleet(t, w, map[string]int{ShipTransport: 1})
+	w.Fleets["fark"] = &Fleet{ID: "fark", OwnerID: "e01", SystemID: f.SystemID, Ships: Ships{ShipColonyArk: 1}, Cargo: Resources{Metal: 20}}
+	r := resolve(t, w, Order{EmpireID: "e00", Type: OrderTransport, Actor: f.ID, Target: "fark", Params: map[string]any{"metal": 150, "deuterium": 60}})
+	accepted(t, r, 1)
+	// The ark holds 100 and carries 20: fuel first (60), then 20 metal.
+	if got := w.Fleets["fark"].Cargo; got != (Resources{Metal: 40, Deuterium: 60}) || f.Cargo != (Resources{Metal: 130}) {
+		t.Fatalf("ark %+v transport %+v", got, f.Cargo)
+	}
+	if tr := eventsOfType(r, "transfer"); len(tr) != 1 || tr[0].Other != "e01" || w.Empires["e01"].Stats.ResourcesReceived != 80 {
+		t.Fatalf("transfer %+v", tr)
+	}
+	rejectedWith(t, resolve(t, w, Order{EmpireID: "e00", Type: OrderTransport, Actor: f.ID, Target: f.ID}), "itself")
+	rejectedWith(t, resolve(t, w, Order{EmpireID: "e00", Type: OrderTransport, Actor: f.ID, Target: "zzz"}), "unknown planet, fleet or system")
+}
+
+func TestFleetCanBeRedirectedAtARouteNode(t *testing.T) {
+	w := newTestWorld(t, 4)
+	p := home(w, "e00")
+	f := formFleet(t, w, map[string]int{ShipScout: 1})
+	p.Resources.Deuterium = 1000
+	var far string
+	for _, id := range systemIDs(w) {
+		if distance(w, f.SystemID, id) >= 3 {
+			far = id
+			break
+		}
+	}
+	accepted(t, resolve(t, w, Order{EmpireID: "e00", Type: OrderMove, Actor: f.ID, Target: far}), 1)
+	if len(f.Route) == 0 || f.RouteIndex != 1 {
+		t.Fatal("fleet should be in transit at a route node")
+	}
+	f.Cargo.Deuterium = 50
+	r := resolve(t, w,
+		Order{EmpireID: "e00", Type: OrderMove, Actor: f.ID, Target: p.SystemID},
+		Order{EmpireID: "e00", Type: OrderMove, Actor: f.ID, Target: far})
+	if len(r.Accepted) != 1 || len(r.Rejected) != 1 || !strings.Contains(r.Rejected[0].Reason, "already has a move mission") {
+		t.Fatalf("redirect: accepted=%+v rejected=%+v", r.Accepted, r.Rejected)
+	}
+	for i := 0; i < 10 && len(f.Route) > 0; i++ {
+		resolve(t, w)
+	}
+	if f.SystemID != p.SystemID || f.Cargo.Deuterium != 50-ShipSpecs[ShipScout].Fuel {
+		t.Fatalf("fleet at %s cargo %+v, want home after paying one edge from cargo", f.SystemID, f.Cargo)
+	}
+	rejectedWith(t, resolve(t, w, Order{EmpireID: "e00", Type: OrderMove, Actor: f.ID, Target: f.SystemID}), "already in")
 }

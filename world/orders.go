@@ -97,6 +97,9 @@ func validateOrder(w *World, o Order) error {
 		if err != nil {
 			return err
 		}
+		if len(f.Route) > 0 {
+			return fmt.Errorf("fleet %s is in transit (%s to %s); split it at its destination", f.ID, f.Mission, f.Target)
+		}
 		ships := shipMapParam(o)
 		if err := checkShips(ships, f.Ships, "in fleet "+f.ID); err != nil {
 			return err
@@ -340,11 +343,8 @@ func idleFleet(w *World, o Order) (*Fleet, error) {
 	if f == nil || f.OwnerID != o.EmpireID {
 		return nil, fmt.Errorf("fleet %q is not one of your fleets", o.Actor)
 	}
-	if len(f.Route) > 0 {
-		if f.Mission != "" && f.RouteIndex == 0 {
-			return nil, fmt.Errorf("fleet %s already has a %s mission this turn", f.ID, f.Mission)
-		}
-		return nil, fmt.Errorf("fleet %s is in transit (%s to %s)", f.ID, f.Mission, f.Target)
+	if len(f.Route) > 0 && f.RouteIndex == 0 {
+		return nil, fmt.Errorf("fleet %s already has a %s mission this turn", f.ID, f.Mission)
 	}
 	if f.Ships.Count() == 0 {
 		return nil, fmt.Errorf("fleet %s has no ships", f.ID)
@@ -373,6 +373,9 @@ func planLaunch(w *World, o Order) (launchPlan, error) {
 	f, err := idleFleet(w, o)
 	if err != nil {
 		return plan, err
+	}
+	if f.Blocked && o.Type != OrderMove {
+		return plan, fmt.Errorf("fleet %s is blocked after a stalemate and must move out first", f.ID)
 	}
 	dest := ""
 	switch o.Type {
@@ -412,22 +415,28 @@ func planLaunch(w *World, o Order) (launchPlan, error) {
 		if p.OwnerID == o.EmpireID {
 			return plan, fmt.Errorf("planet %s is your own", p.ID)
 		}
-		if p.SystemID != f.SystemID && !adjacent(w, f.SystemID, p.SystemID) {
-			return plan, fmt.Errorf("planet %s is not in or adjacent to %s", p.ID, f.SystemID)
+		if r := SpyRange(w.Empires[o.EmpireID].Tech.Sensors); distance(w, f.SystemID, p.SystemID) > r {
+			return plan, fmt.Errorf("planet %s is beyond spy range %d of %s", p.ID, r, f.SystemID)
 		}
 		dest = f.SystemID // scouts observe from where they are (D53)
 	case OrderTransport:
-		// A planet target unloads on arrival; a system target only ferries
-		// the cargo there (e.g. fuel for a stranded fleet) (D55).
+		// A planet target unloads on arrival; a fleet target (e.g. a
+		// government in exile) takes what it can hold; a system target only
+		// ferries the cargo there (D55, D62).
 		if p := w.Planets[o.Target]; p != nil {
 			if p.OwnerID == "" {
 				return plan, fmt.Errorf("planet %s is unowned; nobody can receive cargo there", p.ID)
 			}
 			dest = p.SystemID
+		} else if t := w.Fleets[o.Target]; t != nil {
+			if t.ID == f.ID {
+				return plan, fmt.Errorf("a fleet cannot transport to itself")
+			}
+			dest = t.SystemID
 		} else if w.Systems[o.Target] != nil {
 			dest = o.Target
 		} else {
-			return plan, fmt.Errorf("unknown planet or system %q", o.Target)
+			return plan, fmt.Errorf("unknown planet, fleet or system %q", o.Target)
 		}
 		plan.cargo = resourceParam(o)
 		c := plan.cargo
@@ -495,6 +504,9 @@ func applyLaunch(w *World, o Order, plan launchPlan) {
 	}
 	f.Cargo.Deuterium -= plan.fromCargo
 	f.Cargo = f.Cargo.Add(plan.cargo)
+	if len(plan.route) > 1 {
+		f.Blocked = false
+	}
 	f.Route = plan.route
 	f.RouteIndex = 0
 	f.Mission = o.Type
