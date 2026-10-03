@@ -3,6 +3,7 @@ package agent
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/KakkoiDev/agame/world"
 )
@@ -10,11 +11,61 @@ import (
 // Autopilot is a deterministic, zero-download ruler. It deliberately plays a
 // complete expansion/economy/war loop so the game remains meaningful without
 // optional local models.
+//
+// Besides its one economic or military order it plays simple, deterministic
+// diplomacy: it accepts the first alliance invitation it receives, and an
+// unaligned even-numbered empire founds an alliance and invites its
+// odd-numbered neighbour in ID order. It never attacks an ally while another
+// target exists.
 func Autopilot(w *world.World, eid string) Decision {
 	e := w.Empires[eid]
 	if e == nil || e.Eliminated {
 		return Decision{}
 	}
+	d := strategy(w, eid)
+	if extra := diplomacy(w, e); len(extra.Orders) > 0 {
+		d.Orders = append(d.Orders, extra.Orders...)
+		d.Statement = strings.TrimSpace(d.Statement + " " + extra.Statement)
+	}
+	return d
+}
+
+func diplomacy(w *world.World, e *world.Empire) Decision {
+	if e.AllianceID != "" || w.Turn < 3 {
+		return Decision{}
+	}
+	for _, id := range sortedKeys(w.Alliances) {
+		for _, x := range w.Alliances[id].Invited {
+			if x == e.ID {
+				return one(world.OrderAllianceJoin, "", id, nil, "Accepting the invitation of alliance "+id+".")
+			}
+		}
+	}
+	var n int
+	if _, err := fmt.Sscanf(e.ID, "e%d", &n); err != nil || n%2 == 1 || w.Turn != 3 {
+		return Decision{}
+	}
+	partner := fmt.Sprintf("e%02d", n+1)
+	if p := w.Empires[partner]; p == nil || p.Eliminated || p.AllianceID != "" {
+		return Decision{}
+	}
+	return Decision{Orders: []world.Order{
+		{Type: world.OrderAllianceCreate, Params: map[string]any{"name": e.Name + " Compact", "invite": []any{partner}}},
+		{Type: world.OrderMessage, Target: partner, Params: map[string]any{"body": "We propose an alliance; our invitation is waiting.", "major": true}},
+	}, Statement: "Proposing an alliance to " + partner + "."}
+}
+
+func sortedKeys[V any](m map[string]V) []string {
+	ks := make([]string, 0, len(m))
+	for k := range m {
+		ks = append(ks, k)
+	}
+	sort.Strings(ks)
+	return ks
+}
+
+func strategy(w *world.World, eid string) Decision {
+	e := w.Empires[eid]
 	ps := ownedPlanets(w, eid)
 	if len(ps) == 0 {
 		return exileDecision(w, eid)
@@ -195,7 +246,15 @@ func hasOwnedPlanetAt(w *world.World, eid, system string) bool {
 func nearestEmptyPlanet(w *world.World, from string) string {
 	return nearestPlanet(w, from, func(p *world.Planet) bool { return p.OwnerID == "" })
 }
+
+// nearestEnemyPlanet prefers non-allied targets and turns on an ally only
+// when nobody else is left to fight.
 func nearestEnemyPlanet(w *world.World, eid, from string) string {
+	if t := nearestPlanet(w, from, func(p *world.Planet) bool {
+		return p.OwnerID != "" && p.OwnerID != eid && !world.Allied(w, eid, p.OwnerID)
+	}); t != "" {
+		return t
+	}
 	return nearestPlanet(w, from, func(p *world.Planet) bool { return p.OwnerID != "" && p.OwnerID != eid })
 }
 func nearestPlanet(w *world.World, from string, ok func(*world.Planet) bool) string {

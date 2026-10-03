@@ -67,10 +67,69 @@ func Prompt(o Observation) string {
 	for _, f := range o.Fleets {
 		writeJSONLine(&b, f)
 	}
+	if e.AllianceID != "" {
+		fmt.Fprintf(&b, "your alliance: %s\n", e.AllianceID)
+	}
+	if len(o.Rulers) > 0 {
+		parts := make([]string, 0, len(o.Rulers))
+		for _, r := range o.Rulers {
+			if r.ID != e.ID {
+				parts = append(parts, fmt.Sprintf("%s=%s(%s)", r.ID, r.Name, r.Status))
+			}
+		}
+		fmt.Fprintf(&b, "other rulers: %s\n", strings.Join(parts, " "))
+	}
+	if len(o.Invitations) > 0 {
+		fmt.Fprintf(&b, "invited to join: %s (use alliance_join)\n", strings.Join(o.Invitations, " "))
+	}
+	if len(o.Alliances) > 0 {
+		b.WriteString("alliances:\n")
+		for _, a := range o.Alliances {
+			fmt.Fprintf(&b, "%s %q members=%s", a.ID, a.Name, strings.Join(a.Members, ","))
+			if len(a.Invited) > 0 {
+				fmt.Fprintf(&b, " invited=%s", strings.Join(a.Invited, ","))
+			}
+			b.WriteByte('\n')
+		}
+	}
+	if len(o.Hostilities) > 0 {
+		ids := sortedIDs(o.Hostilities)
+		parts := make([]string, len(ids))
+		for i, id := range ids {
+			parts[i] = fmt.Sprintf("%s(last battle turn %d)", id, o.Hostilities[id])
+		}
+		fmt.Fprintf(&b, "fought with: %s\n", strings.Join(parts, " "))
+	}
 	if len(o.Messages) > 0 {
-		b.WriteString("messages:\n")
+		b.WriteString("messages delivered this turn:\n")
 		for _, m := range o.Messages {
-			fmt.Fprintf(&b, "from %s (turn %d): %q\n", m.From, m.Turn, m.Body)
+			major := ""
+			if m.Major {
+				major = " MAJOR"
+			}
+			fmt.Fprintf(&b, "from %s to %s%s: %q\n", m.From, m.To, major, m.Body)
+		}
+	}
+	if len(o.Rejected) > 0 {
+		b.WriteString("your orders rejected last turn:\n")
+		for _, r := range o.Rejected {
+			fmt.Fprintf(&b, "%s: %s\n", describeOrder(r.Order), r.Reason)
+		}
+	}
+	if len(o.Events) > 0 {
+		b.WriteString("last turn's events you know of:\n")
+		for _, ev := range o.Events {
+			fmt.Fprintf(&b, "%s", ev.Type)
+			for _, x := range []string{ev.EmpireID, ev.Target, ev.Other, ev.Detail} {
+				if x != "" {
+					fmt.Fprintf(&b, " %s", x)
+				}
+			}
+			b.WriteByte('\n')
+			if ev.Report != nil {
+				b.WriteString("report: ")
+				writeJSONLine(&b, ev.Report)
+			}
 		}
 	}
 	owner := map[string]string{}
