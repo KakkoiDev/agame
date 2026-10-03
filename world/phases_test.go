@@ -399,8 +399,7 @@ func TestSovereigntyExileAndElimination(t *testing.T) {
 // --- spec gaps found during the audit; reproduced but not fixed because the
 // correct behaviour needs a design decision. ---
 
-func TestKnownGapStrandedFleetCanLeave(t *testing.T) {
-	t.Skip("spec gap: launch() takes fuel only from an owned planet in the fleet's system, so a fleet at a system without an owned planet (e.g. after a repulsed attack) can never move again; spec requires it to retreat/depart")
+func TestStrandedFleetPaysFuelFromCargo(t *testing.T) {
 	w := newTestWorld(t, 1)
 	f := formFleet(t, w, map[string]int{"frigate": 2})
 	f.SystemID = w.Planets[w.Empires["e01"].HomeworldID].SystemID
@@ -408,6 +407,9 @@ func TestKnownGapStrandedFleetCanLeave(t *testing.T) {
 	r := resolve(t, w, Order{EmpireID: "e00", Type: "move", Actor: f.ID, Target: w.Systems[f.SystemID].Neighbors[0]})
 	if len(r.Accepted) != 1 {
 		t.Fatal("fleet carrying deuterium cannot leave a system without an owned planet")
+	}
+	if want := 1000 - 2*ShipSpecs[ShipFrigate].Fuel; f.Cargo.Deuterium != want {
+		t.Fatalf("cargo deuterium %d, want %d", f.Cargo.Deuterium, want)
 	}
 }
 

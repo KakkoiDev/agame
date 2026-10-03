@@ -149,6 +149,9 @@ Each arriving attack fleet fights alone, in fleet-ID order. Defenders are the sh
 ## D48 — Observation visibility (until espionage reports feed observations)
 Every ruler sees the public hyperspace graph and every planet's id, system, slot, owner and homeworld flag. Its own planets and fleets are shown in full. Foreign fleets are seen only in systems where the ruler owns a planet or has a fleet, as owner plus a size band (1-4, 5-19, 20-49, 50+); debris is seen only in those systems. Foreign planet contents (resources, buildings, docked ships, queues) stay hidden and are learned through espionage. The observation also lists the legal order types with their field shapes.
 
+## D49 — Fuel from carried deuterium; viable Ark test (refines D21, D29)
+At departure, fuel is paid by the empire's own planet in the fleet's system when that planet can cover fuel plus any cargo being loaded; otherwise it is paid from deuterium the fleet already carries (cargo is still loaded only from a planet). A planetless empire's Colony Ark is viable if it is on a paid route, or if it can pay the fuel to reach some unowned planet it could colonize.
+
 # Status
 
 **There are no unresolved v1 questions from the original pre-implementation list.**

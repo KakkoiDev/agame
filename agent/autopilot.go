@@ -239,7 +239,9 @@ func describeOrder(o world.Order) string {
 	return fmt.Sprintf("%s %s", o.Type, o.Actor)
 }
 
-// canLaunch: fuel is paid by an owned planet in the fleet's system, so a fleet elsewhere can only act in place; ordering anything else is always rejected.
+// canLaunch mirrors the engine's fuel rule (an owned planet in the fleet's
+// system, else carried deuterium) so the autopilot never repeats an order the
+// engine would reject.
 func canLaunch(w *world.World, eid string, f *world.Fleet, target string) bool {
-	return hasOwnedPlanetAt(w, eid, f.SystemID) || w.Planets[target].SystemID == f.SystemID
+	return f.OwnerID == eid && world.FuelAvailable(w, f, target)
 }

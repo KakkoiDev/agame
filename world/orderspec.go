@@ -40,7 +40,7 @@ func OrderSpecs() []OrderSpec {
 		{Type: OrderResearch, Actor: "own planet id (pays)", Target: techs, Note: "one research queue per empire"},
 		{Type: OrderBuildShips, Actor: "own planet id", Target: ships, Params: map[string]string{"quantity": "int >= 1"}, Note: "one shipyard queue per planet; colony_ark needs colonization 1"},
 		{Type: OrderFormFleet, Actor: "own planet id", Params: map[string]string{"ships": "{ship class: int >= 1} docked at the planet"}, Note: "creates an idle fleet in the planet's system"},
-		{Type: OrderMove, Actor: "own idle fleet id", Target: "system id", Note: "fuel (deuterium) is paid at departure by an own planet in the fleet's system"},
+		{Type: OrderMove, Actor: "own idle fleet id", Target: "system id", Note: "fuel (deuterium) is paid at departure by an own planet in the fleet's system, else from deuterium the fleet carries"},
 		{Type: OrderAttack, Actor: "own idle fleet id", Target: "foreign planet id", Note: "capture needs a surviving frigate or cruiser"},
 		{Type: OrderSpy, Actor: "own idle fleet id", Target: "planet id"},
 		{Type: OrderTransport, Actor: "own idle fleet id", Target: "own planet id", Params: map[string]string{"metal": "int >= 0", "crystal": "int >= 0", "deuterium": "int >= 0"}, Note: "cargo is loaded from an own planet in the fleet's system"},

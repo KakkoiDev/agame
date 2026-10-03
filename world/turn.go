@@ -190,6 +190,13 @@ func applyOrder(w *World, o Order) error {
 	}
 	return nil
 }
+
+// launch starts a fleet mission. Fuel is paid at departure (spec/game.md,
+// Fleets and movement) by the empire's own planet in the fleet's system when
+// that planet can cover fuel and any cargo; otherwise by deuterium the fleet
+// already carries as cargo (spec/decisions.md D29, D49), so a fleet stranded
+// away from its planets can still leave. Cargo itself is always loaded from
+// the planet.
 func launch(w *World, o Order) error {
 	f := w.Fleets[o.Actor]
 	targetSystem := o.Target
@@ -200,38 +207,33 @@ func launch(w *World, o Order) error {
 	if len(route) < 2 && f.SystemID != targetSystem {
 		return fmt.Errorf("route")
 	}
-	fuel := 0
-	for k, n := range f.Ships {
-		fuel += ShipSpecs[k].Fuel * n
-	}
-	fuel *= max(0, len(route)-1)
-	discount := 100 - 5*w.Empires[o.EmpireID].Tech.Propulsion
-	if discount < 0 {
-		discount = 0
-	}
-	fuel = (fuel*discount + 99) / 100
+	fuel := routeFuel(f.Ships, len(route)-1, w.Empires[o.EmpireID].Tech.Propulsion)
 	source := ownedPlanetAt(w, o.EmpireID, f.SystemID)
 	// every check happens before any mutation so a rejected launch has no side effects.
 	var cargo Resources
 	if o.Type == OrderTransport {
 		cargo = resourceParam(o)
-		room := 0
-		for k, n := range f.Ships {
-			room += ShipSpecs[k].Cargo * n
-		}
-		room -= f.Cargo.Metal + f.Cargo.Crystal + f.Cargo.Deuterium
+		room := cargoCapacity(f.Ships) - (f.Cargo.Metal + f.Cargo.Crystal + f.Cargo.Deuterium)
 		if cargo.Metal < 0 || cargo.Crystal < 0 || cargo.Deuterium < 0 || cargo.Metal > room || cargo.Crystal > room || cargo.Deuterium > room || cargo.Metal+cargo.Crystal+cargo.Deuterium > room {
 			return fmt.Errorf("cargo")
 		}
 	}
-	need := cargo
-	need.Deuterium += fuel
-	if need != (Resources{}) {
-		if source == nil || !source.Resources.Enough(need) {
-			return fmt.Errorf("fuel/cargo")
+	fromPlanet := cargo
+	fromPlanet.Deuterium += fuel
+	fromCargo := 0
+	if source == nil || !source.Resources.Enough(fromPlanet) {
+		if f.Cargo.Deuterium < fuel {
+			return fmt.Errorf("fuel")
 		}
-		source.Resources = source.Resources.Sub(need)
-	} // a free launch (e.g. colonizing in place) needs no paying planet
+		fromPlanet, fromCargo = cargo, fuel
+	}
+	if fromPlanet != (Resources{}) { // a free launch (e.g. colonizing in place) needs no paying planet
+		if source == nil || !source.Resources.Enough(fromPlanet) {
+			return fmt.Errorf("cargo source")
+		}
+		source.Resources = source.Resources.Sub(fromPlanet)
+	}
+	f.Cargo.Deuterium -= fromCargo
 	f.Cargo = f.Cargo.Add(cargo)
 	f.Route = route
 	f.RouteIndex = 0
@@ -239,6 +241,45 @@ func launch(w *World, o Order) error {
 	f.Target = o.Target
 	return nil
 }
+
+// routeFuel is the deuterium a fleet pays to cross edges route edges:
+// sum(ship fuel/edge) x edges, -5% per Propulsion level, rounded up.
+func routeFuel(ships Ships, edges, propulsion int) int {
+	fuel := 0
+	for k, n := range ships {
+		fuel += ShipSpecs[k].Fuel * n
+	}
+	fuel *= max(0, edges)
+	discount := max(0, 100-5*propulsion)
+	return (fuel*discount + 99) / 100
+}
+
+func cargoCapacity(ships Ships) int {
+	room := 0
+	for k, n := range ships {
+		room += ShipSpecs[k].Cargo * n
+	}
+	return room
+}
+
+// FuelAvailable reports whether fleet f can pay the fuel to reach the target
+// system or planet from where it is, under the same rules launch applies.
+func FuelAvailable(w *World, f *Fleet, target string) bool {
+	if p := w.Planets[target]; p != nil {
+		target = p.SystemID
+	}
+	route := shortest(w, f.SystemID, target)
+	if len(route) == 0 || w.Empires[f.OwnerID] == nil {
+		return false
+	}
+	fuel := routeFuel(f.Ships, len(route)-1, w.Empires[f.OwnerID].Tech.Propulsion)
+	if fuel == 0 || f.Cargo.Deuterium >= fuel {
+		return true
+	}
+	src := ownedPlanetAt(w, f.OwnerID, f.SystemID)
+	return src != nil && src.Resources.Deuterium >= fuel
+}
+
 func shortest(w *World, a, b string) []string {
 	if a == b {
 		return []string{a}
@@ -420,6 +461,12 @@ func recycle(w *World, f *Fleet) {
 	f.Cargo.Crystal += c
 	s.Debris.Crystal -= c
 }
+
+// updateSovereignty applies spec/game.md "Elimination and government in
+// exile" and D29: a planetless empire survives only with a viable Colony Ark,
+// i.e. one already committed to a paid route, or an idle one that can pay
+// (from carried deuterium) the fuel to reach some unowned planet it could
+// colonize.
 func updateSovereignty(w *World) {
 	for _, e := range w.Empires {
 		if planetCount(w, e.ID) > 0 {
@@ -428,14 +475,29 @@ func updateSovereignty(w *World) {
 			continue
 		}
 		viable := false
-		for _, f := range w.Fleets {
-			if f.OwnerID == e.ID && f.Ships[ShipColonyArk] > 0 {
+		for _, id := range fleetIDs(w) {
+			if f := w.Fleets[id]; f.OwnerID == e.ID && f.Ships[ShipColonyArk] > 0 && viableArk(w, f) {
 				viable = true
+				break
 			}
 		}
 		e.Exile = viable
 		e.Eliminated = !viable
 	}
+}
+
+func viableArk(w *World, f *Fleet) bool {
+	if len(f.Route) > 0 {
+		return true
+	}
+	for _, id := range systemIDs(w) {
+		for _, pid := range w.Systems[id].Planets {
+			if p := w.Planets[pid]; p != nil && p.OwnerID == "" && FuelAvailable(w, f, id) {
+				return true
+			}
+		}
+	}
+	return false
 }
 func planetCount(w *World, e string) int {
 	n := 0
