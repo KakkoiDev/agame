@@ -1,0 +1,12 @@
+import {test,expect} from "@playwright/test";
+
+async function ready(page){await page.goto("/");await page.waitForFunction(()=>document.querySelector("#startup-stage")?.textContent==="Ready",{timeout:20000})}
+async function make(page,name,seed){await page.locator("#name").fill(name);await page.locator("#seed").fill(String(seed));await page.getByRole("button",{name:"New game"}).click();await expect(page.locator("#status")).toContainText("Universe created")}
+
+test("universe list remains usable after repeated switching",async({page})=>{await ready(page);for(const [n,s] of [["One",1],["Two",2],["Three",3]])await make(page,n,s);const refs=await page.locator(".game").evaluateAll(xs=>xs.map(x=>x.dataset.ref));expect(refs).toHaveLength(3);for(const ref of [...refs,...refs].reverse()){await page.locator(`.game[data-ref="${ref}"]`).click();await expect(page.locator("#status")).toContainText("loaded")}await expect(page.locator(".game")).toHaveCount(3)});
+
+test("advance one year persists all twelve turns",async({page})=>{await ready(page);await make(page,"Year",9);await page.getByRole("button",{name:"Advance 1 year"}).click();await expect(page.locator("#turn")).toContainText("Turn 12",{timeout:20000});const ref=await page.locator(".game").first().getAttribute("data-ref");await page.reload();await page.waitForFunction(()=>document.querySelector("#startup-stage")?.textContent==="Ready",{timeout:20000});await page.locator(`.game[data-ref="${ref}"]`).click();await expect(page.locator("#turn")).toContainText("Turn 12")});
+
+test("backup without connection never damages local game",async({page})=>{await ready(page);await make(page,"Local",4);await page.getByRole("button",{name:"Advance 1 month"}).click();await page.locator("summary").filter({hasText:"GitHub backup"}).click();await page.getByRole("button",{name:"Back up now"}).click();await expect(page.locator("#status")).toContainText("Connect GitHub first");await expect(page.locator("#turn")).toContainText("Turn 1")});
+
+test("autorun advances and can be stopped",async({page})=>{await ready(page);await make(page,"Auto",5);await page.getByLabel("Run continuously").check();await expect.poll(async()=>Number((await page.locator("#turn").textContent()).match(/Turn (\d+)/)?.[1]||0),{timeout:10000}).toBeGreaterThan(1);await page.getByLabel("Run continuously").uncheck();const stopped=await page.locator("#turn").textContent();await page.waitForTimeout(800);expect(await page.locator("#turn").textContent()).toBe(stopped)});

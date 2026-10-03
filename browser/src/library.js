@@ -9,7 +9,8 @@ export class UniverseLibrary {
   constructor(fs, dir="/library") { this.fs=fs; this.dir=dir; this.remote=null; }
   static async open() {
     const fs=new LightningFS("agame",{wipe:false});
-    await fs.promises.mkdir("/library",{recursive:true}); await fs.promises.mkdir("/sync",{recursive:true});
+    await fs.promises.readdir("/");
+    for (const d of ["/library","/sync"]) { try { await fs.promises.mkdir(d); } catch (e) { if (e?.code!=="EEXIST") throw e; } } // LightningFS has no recursive mkdir: an existing dir throws EEXIST on reload
     const x=new UniverseLibrary(fs);
     try { await fs.promises.stat("/library/.git"); } catch {
       await git.init({fs,dir:"/library",defaultBranch:"main"});
@@ -93,7 +94,9 @@ export class UniverseLibrary {
       if(workdir===0) await git.remove({fs:this.fs,dir:this.dir,filepath});
       else if(head!==workdir) await git.add({fs:this.fs,dir:this.dir,filepath});
     }
-    return git.commit({fs:this.fs,dir:this.dir,message:message+"\n\nJikko-Actor: agame\nJikko-Operation: "+operation,author:{name:"AGame Browser",email:"browser@agame.local"}});
+    const sha=await git.commit({fs:this.fs,dir:this.dir,message:message+"\n\nJikko-Actor: agame\nJikko-Operation: "+operation,author:{name:"AGame Browser",email:"browser@agame.local"}});
+    await this.fs.promises.flush?.(); // LightningFS persists its metadata on a debounce; a reload right after a commit would otherwise lose it
+    return sha;
   }
   async syncHead(ref){try{return new TextDecoder().decode(await this.fs.promises.readFile("/sync/"+encodeURIComponent(ref)))}catch{return null}}
   async setSyncHead(ref,sha){await this.fs.promises.writeFile("/sync/"+encodeURIComponent(ref),new TextEncoder().encode(sha))}
