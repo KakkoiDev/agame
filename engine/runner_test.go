@@ -181,3 +181,44 @@ func TestLongRunInvariants(t *testing.T) {
 		}
 	}
 }
+
+// runAutopilot plays a fresh fixed-seed autopilot game and returns every turn
+// result plus the final world, all as JSON.
+func runAutopilot(t *testing.T, seed int64, turns int) ([]string, string, map[string]int) {
+	t.Helper()
+	r := &Runner{World: newWorld(t, seed)}
+	r.Agents = autopilotAgents(func() *world.World { return r.World })
+	var results []string
+	kinds := map[string]int{}
+	for i := 0; i < turns; i++ {
+		res, err := r.Turn(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, e := range res.Events {
+			kinds[e.Type]++
+		}
+		b, _ := json.Marshal(res)
+		results = append(results, string(b))
+	}
+	b, _ := json.Marshal(r.World)
+	return results, string(b), kinds
+}
+
+func TestHundredTurnAutopilotGameIsIdenticalAcrossRuns(t *testing.T) {
+	const turns = 100
+	ra, wa, kinds := runAutopilot(t, 2026, turns)
+	rb, wb, _ := runAutopilot(t, 2026, turns)
+	for i := range ra {
+		if ra[i] != rb[i] {
+			t.Fatalf("turn %d diverged:\n%s\n%s", i, ra[i], rb[i])
+		}
+	}
+	if wa != wb {
+		t.Fatal("final worlds diverged")
+	}
+	if kinds["battle"] == 0 {
+		t.Fatalf("no battle in %d turns; the test no longer exercises combat: %v", turns, kinds)
+	}
+	t.Logf("event counts over %d turns: %v", turns, kinds)
+}

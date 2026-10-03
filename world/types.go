@@ -75,3 +75,37 @@ type World struct {
 	Events    []Event
 	NextFleet int
 }
+
+// Order types (spec/agents.md). Fleet missions reuse the fleet order names.
+const (
+	OrderConstruct  = "construct"
+	OrderResearch   = "research"
+	OrderBuildShips = "build_ships"
+	OrderFormFleet  = "form_fleet"
+	OrderMove       = "move"
+	OrderAttack     = "attack"
+	OrderSpy        = "spy"
+	OrderTransport  = "transport"
+	OrderRecycle    = "recycle"
+	OrderColonize   = "colonize"
+	OrderMessage    = "message"
+)
+
+// Ship classes (spec/game.md, Ships).
+const (
+	ShipScout     = "scout"
+	ShipTransport = "transport"
+	ShipColonyArk = "colony_ark"
+	ShipFrigate   = "frigate"
+	ShipCruiser   = "cruiser"
+	ShipRecycler  = "recycler"
+)
+
+// Count returns the total number of ships.
+func (s Ships) Count() int {
+	n := 0
+	for _, c := range s {
+		n += c
+	}
+	return n
+}

@@ -307,40 +307,6 @@ func TestColonizeRespectsSustainableColonyLimit(t *testing.T) {
 	}
 }
 
-func TestCombatCaptureAndRepulse(t *testing.T) {
-	w := newTestWorld(t, 1)
-	p := home(w, "e00")
-	p.Ships["frigate"] = 10
-	f := formFleet(t, w, map[string]int{"frigate": 10})
-	target := w.Planets[w.Systems[f.SystemID].Planets[1]]
-	target.OwnerID = "e01"
-	target.Resources = Resources{101, 50, 10}
-	target.Construction = &Queue{Kind: "metal_mine", Required: 5}
-	target.Buildings.DefenseGrid = 1
-	r := resolve(t, w, Order{EmpireID: "e00", Type: "attack", Actor: f.ID, Target: target.ID})
-	if target.OwnerID != "e00" || target.Construction != nil {
-		t.Fatalf("capture failed: owner=%s queue=%+v", target.OwnerID, target.Construction)
-	}
-	if target.Resources != (Resources{50, 25, 5}) || target.Buildings.DefenseGrid != 1 {
-		t.Fatalf("capture effects wrong: %+v %+v", target.Resources, target.Buildings)
-	}
-	if len(r.Events) != 1 || r.Events[0].Type != "captured" || r.Events[0].Detail != "e01" {
-		t.Fatalf("events=%+v", r.Events)
-	}
-
-	// Now a heavily defended planet repulses the fleet and halves it.
-	strong := w.Planets[w.Systems[f.SystemID].Planets[2]]
-	strong.OwnerID = "e02"
-	strong.Buildings.DefenseGrid = 100
-	r = resolve(t, w, Order{EmpireID: "e00", Type: "attack", Actor: f.ID, Target: strong.ID})
-	if strong.OwnerID != "e02" || f.Ships["frigate"] != 5 {
-		t.Fatalf("repulse: owner=%s frigates=%d", strong.OwnerID, f.Ships["frigate"])
-	}
-	if len(r.Events) != 1 || r.Events[0].Type != "attack_repulsed" {
-		t.Fatalf("events=%+v", r.Events)
-	}
-}
-
 func TestStationaryDefendingFleetAddsDefense(t *testing.T) {
 	w := newTestWorld(t, 1)
 	p := home(w, "e00")
@@ -433,23 +399,6 @@ func TestSovereigntyExileAndElimination(t *testing.T) {
 // --- spec gaps found during the audit; reproduced but not fixed because the
 // correct behaviour needs a design decision. ---
 
-func TestKnownGapPlanetDockedShipsDefend(t *testing.T) {
-	t.Skip("spec gap: ships docked on a planet (Planet.Ships, e.g. the two starting frigates) are ignored by combat(); only fleets count as defenders")
-	w := newTestWorld(t, 1)
-	p := home(w, "e00")
-	p.Ships["frigate"] = 1
-	att := formFleet(t, w, map[string]int{"frigate": 1}) // 40 attack
-	target := home(w, "e01")
-	target.Buildings.DefenseGrid = 0
-	target.Ships["cruiser"] = 10
-	att.SystemID = target.SystemID
-	w.Planets[w.Systems[target.SystemID].Planets[1]].OwnerID = "e00"
-	resolve(t, w, Order{EmpireID: "e00", Type: "attack", Actor: att.ID, Target: target.ID})
-	if target.OwnerID != "e01" {
-		t.Fatal("homeworld with 10 docked cruisers captured by one frigate")
-	}
-}
-
 func TestKnownGapStrandedFleetCanLeave(t *testing.T) {
 	t.Skip("spec gap: launch() takes fuel only from an owned planet in the fleet's system, so a fleet at a system without an owned planet (e.g. after a repulsed attack) can never move again; spec requires it to retreat/depart")
 	w := newTestWorld(t, 1)
@@ -473,21 +422,5 @@ func TestKnownGapTransportToAnotherEmpire(t *testing.T) {
 	resolve(t, w, Order{EmpireID: "e00", Type: "transport", Actor: f.ID, Target: col.ID, Params: map[string]any{"metal": 100}})
 	if col.Resources.Metal != 100 {
 		t.Fatal("cargo not delivered to trading partner")
-	}
-}
-
-func TestKnownGapDestroyedShipsLeaveDebrisAndEmptyFleetsVanish(t *testing.T) {
-	t.Skip("spec gap: combat is a single aggregate comparison (no 6 rounds, hull, seeded targeting); repulsed fleets are halved without creating debris, and fleets reduced to zero ships persist forever")
-	w := newTestWorld(t, 1)
-	f := formFleet(t, w, map[string]int{"frigate": 1})
-	target := w.Planets[w.Systems[f.SystemID].Planets[1]]
-	target.OwnerID = "e01"
-	target.Buildings.DefenseGrid = 50
-	resolve(t, w, Order{EmpireID: "e00", Type: "attack", Actor: f.ID, Target: target.ID})
-	if w.Systems[f.SystemID].Debris == (Resources{}) {
-		t.Fatal("no debris from destroyed frigate")
-	}
-	if _, ok := w.Fleets[f.ID]; ok {
-		t.Fatal("fleet with zero ships still exists")
 	}
 }

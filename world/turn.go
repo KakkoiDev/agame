@@ -85,7 +85,7 @@ func cloneWorld(w *World) *World { // validation only needs immutable ownership/
 }
 func validateOrder(w *World, o Order) error {
 	switch o.Type {
-	case "construct":
+	case OrderConstruct:
 		p := w.Planets[o.Actor]
 		if p == nil || p.OwnerID != o.EmpireID || p.Construction != nil {
 			return fmt.Errorf("planet unavailable")
@@ -98,7 +98,7 @@ func validateOrder(w *World, o Order) error {
 		if !p.Resources.Enough(cost) {
 			return fmt.Errorf("resources")
 		}
-	case "research":
+	case OrderResearch:
 		e := w.Empires[o.EmpireID]
 		if e.Research != nil {
 			return fmt.Errorf("research busy")
@@ -114,7 +114,7 @@ func validateOrder(w *World, o Order) error {
 		if !p.Resources.Enough(scale(base, techLevel(e.Tech, o.Target)+1)) {
 			return fmt.Errorf("resources")
 		}
-	case "build_ships":
+	case OrderBuildShips:
 		p := w.Planets[o.Actor]
 		if p == nil || p.OwnerID != o.EmpireID || p.ShipyardQueue != nil {
 			return fmt.Errorf("shipyard")
@@ -124,10 +124,10 @@ func validateOrder(w *World, o Order) error {
 		if err != nil || !p.Resources.Enough(cost) {
 			return fmt.Errorf("ships")
 		}
-		if o.Target == "colony_ark" && w.Empires[o.EmpireID].Tech.Colonization < 1 {
+		if o.Target == ShipColonyArk && w.Empires[o.EmpireID].Tech.Colonization < 1 {
 			return fmt.Errorf("colonization")
 		}
-	case "form_fleet":
+	case OrderFormFleet:
 		p := w.Planets[o.Actor]
 		if p == nil || p.OwnerID != o.EmpireID {
 			return fmt.Errorf("planet")
@@ -141,12 +141,12 @@ func validateOrder(w *World, o Order) error {
 				return fmt.Errorf("ships")
 			}
 		}
-	case "move", "attack", "spy", "transport", "recycle", "colonize":
+	case OrderMove, OrderAttack, OrderSpy, OrderTransport, OrderRecycle, OrderColonize:
 		f := w.Fleets[o.Actor]
 		if f == nil || f.OwnerID != o.EmpireID || len(f.Route) > 0 {
 			return fmt.Errorf("fleet")
 		}
-	case "message":
+	case OrderMessage:
 		if w.Empires[o.Target] == nil {
 			return fmt.Errorf("recipient")
 		}
@@ -157,24 +157,24 @@ func validateOrder(w *World, o Order) error {
 }
 func applyOrder(w *World, o Order) error {
 	switch o.Type {
-	case "construct":
+	case OrderConstruct:
 		p := w.Planets[o.Actor]
 		cost := scale(BuildingBase[o.Target], buildingLevel(p.Buildings, o.Target)+1)
 		p.Resources = p.Resources.Sub(cost)
 		p.Construction = &Queue{Kind: o.Target, Level: buildingLevel(p.Buildings, o.Target) + 1, Required: work(cost), Paid: cost}
-	case "research":
+	case OrderResearch:
 		e := w.Empires[o.EmpireID]
 		p := w.Planets[o.Actor]
 		cost := scale(TechBase[o.Target], techLevel(e.Tech, o.Target)+1)
 		p.Resources = p.Resources.Sub(cost)
 		e.Research = &Queue{Kind: o.Target, Level: techLevel(e.Tech, o.Target) + 1, Required: work(cost), Paid: cost}
-	case "build_ships":
+	case OrderBuildShips:
 		p := w.Planets[o.Actor]
 		n := intParam(o, "quantity", 1)
 		cost, _ := shipCost(o.Target, n)
 		p.Resources = p.Resources.Sub(cost)
 		p.ShipyardQueue = &Queue{Kind: o.Target, Quantity: n, Required: work(cost), Paid: cost}
-	case "form_fleet":
+	case OrderFormFleet:
 		p := w.Planets[o.Actor]
 		ships := shipMapParam(o)
 		if !takeShips(p.Ships, ships) {
@@ -183,11 +183,9 @@ func applyOrder(w *World, o Order) error {
 		id := fmt.Sprintf("f%06d", w.NextFleet)
 		w.NextFleet++
 		w.Fleets[id] = &Fleet{ID: id, OwnerID: o.EmpireID, SystemID: p.SystemID, Ships: ships}
-	case "move", "attack", "spy", "recycle", "colonize":
+	case OrderMove, OrderAttack, OrderSpy, OrderTransport, OrderRecycle, OrderColonize:
 		return launch(w, o)
-	case "transport":
-		return launch(w, o)
-	case "message":
+	case OrderMessage:
 		w.Messages = append(w.Messages, Message{Turn: w.Turn + 1, From: o.EmpireID, To: o.Target, Body: stringParam(o, "body"), Major: boolParam(o, "major")})
 	}
 	return nil
@@ -215,7 +213,7 @@ func launch(w *World, o Order) error {
 	source := ownedPlanetAt(w, o.EmpireID, f.SystemID)
 	// every check happens before any mutation so a rejected launch has no side effects.
 	var cargo Resources
-	if o.Type == "transport" {
+	if o.Type == OrderTransport {
 		cargo = resourceParam(o)
 		room := 0
 		for k, n := range f.Ships {
@@ -285,30 +283,39 @@ func advanceFleets(w *World) {
 	}
 }
 func resolveArrivals(w *World) {
+	captured := map[string]bool{}
 	for _, id := range fleetIDs(w) {
 		f := w.Fleets[id]
-		if len(f.Route) > 0 && f.RouteIndex == len(f.Route)-1 {
-			mission := f.Mission
-			f.Route = nil
-			f.RouteIndex = 0
-			switch mission {
-			case "transport":
-				if p := w.Planets[f.Target]; p != nil && p.OwnerID == f.OwnerID {
-					p.Resources = p.Resources.Add(f.Cargo)
-					f.Cargo = Resources{}
-				}
-			case "colonize":
-				colonize(w, f)
-			case "attack":
-				combat(w, f)
-			case "spy":
-				spy(w, f)
-			case "recycle":
-				recycle(w, f)
+		if len(f.Route) == 0 || f.RouteIndex != len(f.Route)-1 {
+			continue
+		}
+		prev := ""
+		if len(f.Route) >= 2 {
+			prev = f.Route[len(f.Route)-2]
+		}
+		mission := f.Mission
+		f.Route = nil
+		f.RouteIndex = 0
+		f.Mission = ""
+		switch mission {
+		case OrderTransport:
+			if p := w.Planets[f.Target]; p != nil && p.OwnerID == f.OwnerID {
+				p.Resources = p.Resources.Add(f.Cargo)
+				f.Cargo = Resources{}
 			}
-			f.Mission = ""
+		case OrderColonize:
+			colonize(w, f)
+		case OrderAttack:
+			if f.Ships.Count() > 0 { // an earlier battle this turn may already have destroyed it
+				combat(w, f, prev, captured)
+			}
+		case OrderSpy:
+			spy(w, f)
+		case OrderRecycle:
+			recycle(w, f)
 		}
 	}
+	pruneEmptyFleets(w)
 }
 func progressQueues(w *World) {
 	for _, p := range w.Planets {
@@ -362,47 +369,20 @@ func produce(w *World) {
 func colonize(w *World, f *Fleet) {
 	p := w.Planets[f.Target]
 	e := w.Empires[f.OwnerID]
-	if p == nil || p.OwnerID != "" || f.Ships["colony_ark"] < 1 || planetCount(w, e.ID) >= 1+e.Tech.Colonization {
+	if p == nil || p.OwnerID != "" || f.Ships[ShipColonyArk] < 1 || planetCount(w, e.ID) >= 1+e.Tech.Colonization {
 		return
 	}
-	f.Ships["colony_ark"]--
+	f.Ships[ShipColonyArk]--
+	if f.Ships[ShipColonyArk] == 0 {
+		delete(f.Ships, ShipColonyArk)
+	}
 	p.OwnerID = e.ID
 	p.Buildings.Infrastructure = 1
+	if f.Ships.Count() == 0 { // the fleet is about to be pruned: its cargo lands with the colonists
+		p.Resources = p.Resources.Add(f.Cargo)
+		f.Cargo = Resources{}
+	}
 	w.Events = append(w.Events, Event{Turn: w.Turn, Type: "colonized", EmpireID: e.ID, Target: p.ID})
-}
-func combat(w *World, a *Fleet) {
-	p := w.Planets[a.Target]
-	if p == nil || p.OwnerID == "" || p.OwnerID == a.OwnerID {
-		return
-	}
-	def := p.OwnerID
-	attack := combatPower(a.Ships, w.Empires[a.OwnerID].Tech)
-	defense := 20 * p.Buildings.DefenseGrid * (100 + 10*w.Empires[def].Tech.Shields) / 100
-	for _, f := range w.Fleets {
-		if f.OwnerID == def && f.SystemID == p.SystemID && len(f.Route) == 0 {
-			defense += combatPower(f.Ships, w.Empires[def].Tech)
-		}
-	}
-	if attack > defense && a.Ships["frigate"]+a.Ships["cruiser"] > 0 {
-		old := p.OwnerID
-		p.OwnerID = a.OwnerID
-		p.Resources = Resources{p.Resources.Metal / 2, p.Resources.Crystal / 2, p.Resources.Deuterium / 2}
-		p.Construction = nil
-		p.ShipyardQueue = nil
-		w.Events = append(w.Events, Event{Turn: w.Turn, Type: "captured", EmpireID: a.OwnerID, Target: p.ID, Detail: old})
-	} else { // explainable aggregate loss model; deterministic.
-		for k := range a.Ships {
-			a.Ships[k] = a.Ships[k] / 2
-		}
-		w.Events = append(w.Events, Event{Turn: w.Turn, Type: "attack_repulsed", EmpireID: a.OwnerID, Target: p.ID})
-	}
-}
-func combatPower(s Ships, t Tech) int {
-	v := 0
-	for k, n := range s {
-		v += ShipSpecs[k].Attack * n
-	}
-	return v * (100 + 10*t.Weapons) / 100
 }
 func spy(w *World, f *Fleet) {
 	p := w.Planets[f.Target]
@@ -449,7 +429,7 @@ func updateSovereignty(w *World) {
 		}
 		viable := false
 		for _, f := range w.Fleets {
-			if f.OwnerID == e.ID && f.Ships["colony_ark"] > 0 {
+			if f.OwnerID == e.ID && f.Ships[ShipColonyArk] > 0 {
 				viable = true
 			}
 		}
