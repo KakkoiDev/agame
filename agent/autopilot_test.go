@@ -176,3 +176,23 @@ func TestDescribeOrderAndHuman(t *testing.T) {
 		t.Fatal("human labels")
 	}
 }
+
+func TestAutopilotDoesNotLaunchUnfueledAttacks(t *testing.T) {
+	w, _ := world.Generate(5, []string{"A", "B", "C", "D", "E", "F", "G", "H"})
+	h := w.Planets[w.Empires["e00"].HomeworldID]
+	w.Fleets["fwar"] = &world.Fleet{ID: "fwar", OwnerID: "e00", SystemID: h.SystemID, Ships: world.Ships{"cruiser": 3}}
+	h.Resources = world.Resources{Metal: 5000, Crystal: 5000}
+	for _, o := range Autopilot(w, "e00").Orders {
+		if o.Type == "attack" {
+			t.Fatalf("autopilot attacked without fuel: %+v", o)
+		}
+	}
+	h.Resources.Deuterium = 5000
+	attacked := false
+	for _, o := range Autopilot(w, "e00").Orders {
+		attacked = attacked || o.Type == "attack"
+	}
+	if !attacked {
+		t.Fatal("fuelled fleet did not attack")
+	}
+}

@@ -83,7 +83,7 @@ func strategy(w *world.World, eid string) Decision {
 			}
 		}
 		if f.Ships["frigate"]+f.Ships["cruiser"] > 0 && hasOwnedPlanetAt(w, eid, f.SystemID) {
-			if target := nearestEnemyPlanet(w, eid, f.SystemID); target != "" {
+			if target := nearestEnemyPlanet(w, eid, f.SystemID); target != "" && canLaunch(w, eid, f, target) {
 				return one("attack", f.ID, target, nil, "Expeditionary fleet attacking "+target+".")
 			}
 		}

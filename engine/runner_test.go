@@ -136,10 +136,13 @@ func TestLongRunIsReproducibleAcrossJSONRoundTrips(t *testing.T) {
 func TestLongRunInvariants(t *testing.T) {
 	for _, seed := range []int64{1, 2, 3} {
 		r := &Runner{World: newWorld(t, seed), Agents: observationAutopilots()}
-		for i := 0; i < 120; i++ {
-			if _, err := r.Turn(context.Background()); err != nil {
+		ended := false
+		for i := 0; i < 120 && !ended; i++ {
+			rec, err := r.Step(context.Background())
+			if err != nil {
 				t.Fatal(err)
 			}
+			ended = rec.End != nil
 			w := r.World
 			for id, p := range w.Planets {
 				if p.Resources.Metal < 0 || p.Resources.Crystal < 0 || p.Resources.Deuterium < 0 {
