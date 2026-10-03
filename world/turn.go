@@ -2,16 +2,16 @@ package world
 
 import("fmt";"sort")
 type Order struct{EmpireID,Type,Actor,Target string;Params map[string]any}
-type TurnResult struct{Turn int;Accepted,Rejected []Order;Events []Event}
+type TurnResult struct{Turn int `json:"turn"`;Accepted []Order `json:"accepted"`;Rejected []Order `json:"rejected"`;Events []Event `json:"events"`}
 func ResolveTurn(w *World,submitted map[string][]Order)(TurnResult,error){
  if w==nil{return TurnResult{},fmt.Errorf("nil world")}
- snap:=cloneWorld(w);res:=TurnResult{Turn:w.Turn};ids:=make([]string,0,len(submitted));for id:=range submitted{ids=append(ids,id)};sort.Strings(ids);var valid []Order
+ snap:=cloneWorld(w);res:=TurnResult{Turn:w.Turn};firstEvent:=len(w.Events);ids:=make([]string,0,len(submitted));for id:=range submitted{ids=append(ids,id)};sort.Strings(ids);var valid []Order
  for _,eid:=range ids{for _,o:=range submitted[eid]{if o.EmpireID!=eid||w.Empires[eid]==nil||o.Type==""{res.Rejected=append(res.Rejected,o);continue};if err:=validateOrder(snap,o);err!=nil{res.Rejected=append(res.Rejected,o);continue};valid=append(valid,o)}}
  // deterministic phase ordering; every validation above saw the same snapshot. Orders only touch their own empire's assets, so re-validating against the
  // live world only catches same-empire conflicts (double-spent resources, a second queue/mission for the same planet/fleet) and never another empire's orders.
  for _,o:=range valid{if err:=validateOrder(w,o);err!=nil{res.Rejected=append(res.Rejected,o);continue};if err:=applyOrder(w,o);err!=nil{res.Rejected=append(res.Rejected,o);continue};res.Accepted=append(res.Accepted,o)}
  advanceFleets(w);progressQueues(w);resolveArrivals(w);produce(w);updateSovereignty(w);w.Turn++
- res.Events=append(res.Events,w.Events...);return res,nil
+ res.Events=append(res.Events,w.Events[firstEvent:]...);return res,nil
 }
 func cloneWorld(w *World)*World{ // validation only needs immutable ownership/resources; JSON-free explicit copy is cheap enough.
  c:=*w;c.Planets=map[string]*Planet{};for id,p:=range w.Planets{x:=*p;c.Planets[id]=&x};c.Empires=map[string]*Empire{};for id,e:=range w.Empires{x:=*e;c.Empires[id]=&x};c.Fleets=map[string]*Fleet{};for id,f:=range w.Fleets{x:=*f;c.Fleets[id]=&x};return &c

@@ -240,3 +240,24 @@ func TestFailedLaunchHasNoSideEffects(t *testing.T) {
 		t.Fatalf("fuel charged for rejected launch: deuterium=%d", p.Resources.Deuterium)
 	}
 }
+
+func TestResolveTurnReturnsOnlyNewEvents(t *testing.T) {
+	w := newTestWorld(t, 1)
+	w.Events = append(w.Events, Event{Turn: 0, Type: "old"})
+	r := resolve(t, w)
+	for _, e := range r.Events {
+		if e.Type == "old" {
+			t.Fatal("TurnResult re-reports events from earlier turns")
+		}
+	}
+}
+
+func TestTurnResultJSONUsesLowercaseKeys(t *testing.T) {
+	// browser/src/library.js reads result.events from the wasm payload.
+	b, _ := json.Marshal(TurnResult{Events: []Event{{Type: "x"}}})
+	var m map[string]json.RawMessage
+	_ = json.Unmarshal(b, &m)
+	if _, ok := m["events"]; !ok {
+		t.Fatalf("TurnResult JSON lacks \"events\": %s", b)
+	}
+}
