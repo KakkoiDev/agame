@@ -225,3 +225,26 @@ func TestOpenAIMalformedOutputKeepsRawAndRepairFeedsProblemBack(t *testing.T) {
 		t.Fatal("prompt hash")
 	}
 }
+
+func TestOpenAIReflectAndConfig(t *testing.T) {
+	o := Observe(genWorld(t, 1), "e00")
+	srv := chatServer(t, 200, "  Lost the homeworld to e01. Trust them less.  ", func(_ *http.Request, body map[string]any) {
+		msgs, _ := body["messages"].([]any)
+		sys, _ := msgs[0].(map[string]any)["content"].(string)
+		if body["max_tokens"] != float64(ReflectionMaxTokens) || !strings.Contains(sys, "homeworld_captured") || !strings.Contains(sys, "cannot give orders") {
+			t.Errorf("reflection request %v", body)
+		}
+	})
+	defer srv.Close()
+	a := OpenAICompatible{Endpoint: srv.URL, Model: "m"}
+	note, err := a.Reflect(context.Background(), o, []string{"homeworld_captured"})
+	if err != nil || note != "Lost the homeworld to e01. Trust them less." {
+		t.Fatalf("%q %v", note, err)
+	}
+	c := a.Config()
+	if c["model"] != "m" || c["max_tokens"] != DefaultMaxTokens || c["temperature"] != Temperature {
+		t.Fatalf("config %v", c)
+	}
+	var _ Reflector = a
+	var _ Configured = a
+}

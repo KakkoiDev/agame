@@ -17,7 +17,7 @@ The engine owns truth. Agents choose actions. [Jikko](https://github.com/KakkoiD
 - diplomacy: messages to an empire, an alliance or everyone (delivered next turn), invitation-based alliances, automatic treaty breach when attacking an ally, a public record of hostilities
 - government-in-exile/elimination state and the canonical end conditions (600 turns, last empire standing, no sovereignty possible) with final standings
 - simultaneous turn barrier through one turn loop (`engine.Runner`) shared by the CLI and the browser
-- decision harness with repair of invalid model output, per-ruler timeouts and decision records; rejected orders always carry a reason the ruler sees next turn
+- decision harness with repair of invalid model output, per-ruler timeouts, decision records and reflection phases after major events; rejected orders always carry a reason the ruler sees next turn
 - replayable runs: initial state, turn log, event log and state hashes
 - generic agent interface, deterministic autopilot and OpenAI-compatible local-model adapter
 - Jikko tree/batch-read adapter
@@ -51,6 +51,7 @@ A run directory holds:
 | `turns.jsonl` | per turn: submitted, accepted and rejected orders (with reasons), events, resulting state hash |
 | `events.jsonl` | the append-only event log |
 | `decisions.jsonl` | per ruler and turn: prompt hash, raw attempts, repairs, final orders, statement, rejections, failures, latency |
+| `reflections.jsonl` | reflection phases offered after major events and annual reviews, with the ruler's note |
 | `result.json` | end condition, final state hash, standings and agent-operation metrics |
 
 Rulers default to the deterministic autopilot. Set `AGAME_MODEL_ENDPOINT` (and optionally `AGAME_MODEL`, `AGAME_API_KEY`) to let a local OpenAI-compatible model rule every empire. `AGAME_TURN_LIMIT` and `AGAME_TIMEOUT` (a Go duration such as `90s`) override the canonical 600-turn limit and the per-ruler timeout.

@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,6 +14,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/KakkoiDev/agame/engine"
 	"github.com/KakkoiDev/agame/run"
 	"github.com/KakkoiDev/agame/world"
 )
@@ -215,6 +218,17 @@ func TestRunReplayAndResult(t *testing.T) {
 	}
 	if err := s.ReadJSONL(run.DecisionsFile, func([]byte) error { n++; return nil }); err != nil || n != want || n < 40 {
 		t.Fatalf("decision records %d %v", n, err)
+	}
+	n = 0
+	if err := s.ReadJSONL(run.ReflectionsFile, func(b []byte) error {
+		var r engine.ReflectionRecord
+		n++
+		if err := json.Unmarshal(b, &r); err != nil || len(r.Triggers) == 0 || r.Offered {
+			return fmt.Errorf("reflection %s", b)
+		}
+		return nil
+	}); err != nil || n == 0 {
+		t.Fatalf("reflections %d %v", n, err)
 	}
 	// A tampered event log fails the replay.
 	ev := filepath.Join(s.Dir, run.EventsFile)

@@ -44,25 +44,72 @@ func (a OpenAICompatible) Repair(ctx context.Context, o Observation, prev Decisi
 	})
 }
 
+// Temperature is the sampling temperature of every request.
+const Temperature = 0.3
+
+// ReflectionMaxTokens bounds a reflection note.
+const ReflectionMaxTokens = 400
+
+// Reflect asks the model for a short durable memory note about the events
+// that triggered reflection. The answer is free text; no orders are read.
+func (a OpenAICompatible) Reflect(ctx context.Context, o Observation, triggers []string) (string, error) {
+	a.MaxTokens = ReflectionMaxTokens
+	content, err := a.chat(ctx, []map[string]string{
+		{"role": "system", "content": ReflectionPrompt(triggers)},
+		{"role": "user", "content": Prompt(o)},
+	})
+	return strings.TrimSpace(content), err
+}
+
+// ReflectionPrompt asks for a memory note, not orders.
+func ReflectionPrompt(triggers []string) string {
+	return "Reflection phase after: " + strings.Join(triggers, ", ") + ". You cannot give orders now. " +
+		"Write a concise note (at most 120 words) of what changed, what you now believe and what you want to remember. " +
+		"Do not rewrite earlier observations; state corrections explicitly."
+}
+
+// Config describes the inference settings for the run record.
+func (a OpenAICompatible) Config() map[string]any {
+	mt := a.MaxTokens
+	if mt <= 0 {
+		mt = DefaultMaxTokens
+	}
+	return map[string]any{"model": a.Model, "temperature": Temperature, "max_tokens": mt, "reflection_max_tokens": ReflectionMaxTokens, "prompt_version": PromptVersion}
+}
+
 // RepairPrompt is the message that feeds a validation problem back.
 func RepairPrompt(problem string) string {
 	return "Your previous answer could not be used: " + problem + "\nReply again with the corrected JSON decision only."
 }
 
 func (a OpenAICompatible) complete(ctx context.Context, messages []map[string]string) (Decision, error) {
+	content, err := a.chat(ctx, messages)
+	if err != nil {
+		return Decision{}, err
+	}
+	d, err := ParseDecision(content)
+	if err != nil {
+		return Decision{Raw: content}, &MalformedError{Raw: content, Err: err}
+	}
+	d.Raw = content
+	return d, nil
+}
+
+// chat sends one chat-completion request and returns the reply text.
+func (a OpenAICompatible) chat(ctx context.Context, messages []map[string]string) (string, error) {
 	maxTokens := a.MaxTokens
 	if maxTokens <= 0 {
 		maxTokens = DefaultMaxTokens
 	}
-	body := map[string]any{"model": a.Model, "temperature": 0.3, "max_tokens": maxTokens, "messages": messages}
+	body := map[string]any{"model": a.Model, "temperature": Temperature, "max_tokens": maxTokens, "messages": messages}
 	b, err := json.Marshal(body)
 	if err != nil {
-		return Decision{}, err
+		return "", err
 	}
 	url := strings.TrimRight(a.Endpoint, "/") + "/v1/chat/completions"
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(b))
 	if err != nil {
-		return Decision{}, fmt.Errorf("model request: %w", err)
+		return "", fmt.Errorf("model request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if a.APIKey != "" {
@@ -74,11 +121,11 @@ func (a OpenAICompatible) complete(ctx context.Context, messages []map[string]st
 	}
 	resp, err := c.Do(req)
 	if err != nil {
-		return Decision{}, err
+		return "", err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode/100 != 2 {
-		return Decision{}, fmt.Errorf("model HTTP %s", resp.Status)
+		return "", fmt.Errorf("model HTTP %s", resp.Status)
 	}
 	var out struct {
 		Choices []struct {
@@ -88,15 +135,9 @@ func (a OpenAICompatible) complete(ctx context.Context, messages []map[string]st
 		} `json:"choices"`
 	}
 	if err = json.NewDecoder(io.LimitReader(resp.Body, maxModelResponse)).Decode(&out); err != nil || len(out.Choices) == 0 {
-		return Decision{}, fmt.Errorf("invalid model response")
+		return "", fmt.Errorf("invalid model response")
 	}
-	content := out.Choices[0].Message.Content
-	d, err := ParseDecision(content)
-	if err != nil {
-		return Decision{Raw: content}, &MalformedError{Raw: content, Err: err}
-	}
-	d.Raw = content
-	return d, nil
+	return out.Choices[0].Message.Content, nil
 }
 
 const maxModelResponse = 8 << 20

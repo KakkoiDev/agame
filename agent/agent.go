@@ -107,6 +107,20 @@ type Repairer interface {
 	Repair(ctx context.Context, o Observation, prev Decision, problem string) (Decision, error)
 }
 
+// Reflector is an Agent that accepts the optional reflection phase offered
+// after major events (spec/agents.md, Reflection triggers). It sees the new
+// observation and the triggers, may update its durable memory and returns a
+// concise note for the record. It cannot submit orders.
+type Reflector interface {
+	Reflect(ctx context.Context, o Observation, triggers []string) (string, error)
+}
+
+// Configured is an Agent that can describe its inference configuration for
+// the run record (spec/benchmark.md, Reproducible universe).
+type Configured interface {
+	Config() map[string]any
+}
+
 // MalformedError is returned when model output is not a decision envelope.
 // Raw is the output, so it can be recorded and fed back for repair.
 type MalformedError struct {

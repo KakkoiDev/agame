@@ -191,6 +191,9 @@ An attacker that survives a six-round stalemate with no route node to retreat to
 ## D62 — Transport to a fleet
 A `transport` may target a fleet, of any empire, to supply it (for instance a government in exile's Colony Ark). The transport flies to the target's current system; on arrival, if the target is there, cargo moves into it up to its free cargo room, deuterium first, then metal, then crystal; the rest stays aboard. A transfer to another empire's fleet is a recorded `transfer`.
 
+## D63 — Reflection triggers (refines D25)
+After resolving a turn that does not end the run, the engine computes reflection triggers per living empire from that turn's events and S(t+1): its homeworld captured (`homeworld_captured`) or recaptured by it (`homeworld_recovered`); it captured another empire's homeworld (`captured_enemy_homeworld`); it entered exile or was restored; it founded, joined or left an alliance, or was the victim of a treaty breach (`alliance_broken`); it fought a battle this turn and its total ship value (docked and in fleets, at full resource cost) fell to at most half of its S(t) value (`lost_half_fleet`); a message marked major was delivered to it; and every 12th turn (`annual_review`). Triggered rulers whose agent implements reflection are offered it, in empire-ID order, on their observation of S(t+1), within the per-ruler timeout; the reflection returns a concise note and can never submit orders. Every offer, including to agents that cannot reflect, is recorded in `reflections.jsonl`. The run header's roster records each agent's inference configuration (model, temperature, output budgets, prompt version) when the agent can describe it.
+
 # Status
 
 **There are no unresolved v1 questions from the original pre-implementation list.**

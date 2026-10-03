@@ -69,10 +69,11 @@ type DecisionRecord struct {
 
 // TurnRecord is everything one turn produced.
 type TurnRecord struct {
-	Turn      int              `json:"turn"`
-	Decisions []DecisionRecord `json:"decisions"`
-	Result    world.TurnResult `json:"result"`
-	End       *world.End       `json:"end,omitempty"`
+	Turn        int                `json:"turn"`
+	Decisions   []DecisionRecord   `json:"decisions"`
+	Result      world.TurnResult   `json:"result"`
+	Reflections []ReflectionRecord `json:"reflections,omitempty"`
+	End         *world.End         `json:"end,omitempty"`
 }
 
 // Ops are the per-ruler agent-operation metrics (spec/benchmark.md).
@@ -153,6 +154,7 @@ func (r *Runner) Step(ctx context.Context) (TurnRecord, error) {
 		submitted[id] = d.Orders
 		rec.Decisions = append(rec.Decisions, d)
 	}
+	before := fleetValues(w)
 	res, err := world.ResolveTurn(w, submitted)
 	if err != nil {
 		return rec, fmt.Errorf("resolve: %w", err)
@@ -168,6 +170,9 @@ func (r *Runner) Step(ctx context.Context) (TurnRecord, error) {
 		d.Accepted = len(d.Orders) - len(d.Rejected)
 	}
 	rec.End = world.CheckEnd(w, r.Budget.TurnLimit)
+	if rec.End == nil {
+		rec.Reflections = r.reflect(ctx, ReflectionTriggers(before, w, res.Events))
+	}
 	return rec, nil
 }
 

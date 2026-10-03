@@ -7,6 +7,7 @@
 //	                rejected orders, events and the resulting state hash
 //	events.jsonl    the append-only event log
 //	decisions.jsonl one decision record per ruler and turn
+//	reflections.jsonl one record per reflection phase offered
 //	result.json     end condition and final standings, once the run ends
 package run
 
@@ -24,22 +25,24 @@ import (
 
 // File names inside a run directory.
 const (
-	WorldFile     = "world.json"
-	InitialFile   = "initial.json"
-	HeaderFile    = "run.json"
-	TurnsFile     = "turns.jsonl"
-	EventsFile    = "events.jsonl"
-	DecisionsFile = "decisions.jsonl"
-	ResultFile    = "result.json"
+	WorldFile       = "world.json"
+	InitialFile     = "initial.json"
+	HeaderFile      = "run.json"
+	TurnsFile       = "turns.jsonl"
+	EventsFile      = "events.jsonl"
+	DecisionsFile   = "decisions.jsonl"
+	ReflectionsFile = "reflections.jsonl"
+	ResultFile      = "result.json"
 )
 
 type Store struct{ Dir string }
 
 // RosterEntry names the decision provider of one ruler.
 type RosterEntry struct {
-	Empire string `json:"empire"`
-	Name   string `json:"name"`
-	Agent  string `json:"agent"`
+	Empire string         `json:"empire"`
+	Name   string         `json:"name"`
+	Agent  string         `json:"agent"`
+	Config map[string]any `json:"config,omitempty"`
 }
 
 // Header is the reproducibility record of a run (spec/benchmark.md,

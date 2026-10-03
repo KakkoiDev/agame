@@ -122,7 +122,11 @@ func rulers(w *world.World) (map[string]agent.Agent, []run.RosterEntry) {
 	var roster []run.RosterEntry
 	for _, id := range sortedKeys(w.Empires) {
 		m[id] = a
-		roster = append(roster, run.RosterEntry{Empire: id, Name: w.Empires[id].Name, Agent: a.(interface{ Name() string }).Name()})
+		e := run.RosterEntry{Empire: id, Name: w.Empires[id].Name, Agent: a.(interface{ Name() string }).Name()}
+		if c, ok := a.(agent.Configured); ok {
+			e.Config = c.Config()
+		}
+		roster = append(roster, e)
 	}
 	return m, roster
 }
@@ -163,6 +167,13 @@ func play(ctx context.Context, s run.Store, n int, out io.Writer) (*world.World,
 		decisions := make([]any, len(rec.Decisions))
 		for i, d := range rec.Decisions {
 			decisions[i] = d
+		}
+		reflections := make([]any, len(rec.Reflections))
+		for i, x := range rec.Reflections {
+			reflections[i] = x
+		}
+		if err := s.AppendJSONL(run.ReflectionsFile, reflections...); err != nil {
+			return w, err
 		}
 		if err := s.Commit(w, rec.Result, decisions...); err != nil {
 			return w, err
