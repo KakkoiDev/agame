@@ -291,7 +291,7 @@ func TestColonizeClaimsEmptyPlanetAndConsumesArk(t *testing.T) {
 	if p.OwnerID != "e00" || p.Buildings != (Buildings{Infrastructure: 1}) || f.Ships["colony_ark"] != 0 {
 		t.Fatalf("colonize failed: owner=%q buildings=%+v ark=%d", p.OwnerID, p.Buildings, f.Ships["colony_ark"])
 	}
-	if len(r.Events) != 1 || r.Events[0].Type != "colonized" || r.Events[0].Target != target {
+	if ev := eventsOfType(r, "colonized"); len(ev) != 1 || ev[0].Target != target {
 		t.Fatalf("events=%+v", r.Events)
 	}
 }
@@ -302,7 +302,7 @@ func TestColonizeRespectsSustainableColonyLimit(t *testing.T) {
 	sys := w.Systems[f.SystemID]
 	w.Planets[sys.Planets[2]].OwnerID = "e00" // already at 1 + Colonization(1) = 2 planets
 	r := resolve(t, w, Order{EmpireID: "e00", Type: "colonize", Actor: f.ID, Target: sys.Planets[1]})
-	if w.Planets[sys.Planets[1]].OwnerID != "" || f.Ships["colony_ark"] != 1 || len(r.Events) != 0 {
+	if w.Planets[sys.Planets[1]].OwnerID != "" || f.Ships["colony_ark"] != 1 || len(eventsOfType(r, "colonized")) != 0 {
 		t.Fatal("colonized beyond sustainable limit")
 	}
 }
@@ -331,7 +331,7 @@ func TestSpyTiers(t *testing.T) {
 		w.Empires["e01"].Tech.Sensors = tc.def
 		r := resolve(t, w, Order{EmpireID: "e00", Type: "spy", Actor: f.ID, Target: target.ID})
 		want := fmt.Sprintf("tier=%d owner=e01", tc.tier)
-		if len(r.Events) != 1 || r.Events[0].Type != "espionage" || r.Events[0].Detail != want {
+		if ev := eventsOfType(r, "espionage"); len(ev) != 1 || ev[0].Detail != want || ev[0].Report == nil || ev[0].Report.Tier != tc.tier {
 			t.Fatalf("sensors %d vs %d: events=%+v want %s", tc.att, tc.def, r.Events, want)
 		}
 	}
@@ -413,8 +413,7 @@ func TestStrandedFleetPaysFuelFromCargo(t *testing.T) {
 	}
 }
 
-func TestKnownGapTransportToAnotherEmpire(t *testing.T) {
-	t.Skip("spec gap: resolveArrivals only unloads cargo at the sender's own planets, so the trade described in spec/game.md (send cargo to another empire) is impossible")
+func TestTransportToAnotherEmpire(t *testing.T) {
 	w := newTestWorld(t, 1)
 	p := home(w, "e00")
 	f := formFleet(t, w, map[string]int{"transport": 1})
@@ -424,5 +423,8 @@ func TestKnownGapTransportToAnotherEmpire(t *testing.T) {
 	resolve(t, w, Order{EmpireID: "e00", Type: "transport", Actor: f.ID, Target: col.ID, Params: map[string]any{"metal": 100}})
 	if col.Resources.Metal != 100 {
 		t.Fatal("cargo not delivered to trading partner")
+	}
+	if w.Empires["e00"].Stats.ResourcesSent != 100 || w.Empires["e01"].Stats.ResourcesReceived != 100 {
+		t.Fatalf("transfer stats %+v %+v", w.Empires["e00"].Stats, w.Empires["e01"].Stats)
 	}
 }

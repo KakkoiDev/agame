@@ -152,6 +152,30 @@ Every ruler sees the public hyperspace graph and every planet's id, system, slot
 ## D49 — Fuel from carried deuterium; viable Ark test (refines D21, D29)
 At departure, fuel is paid by the empire's own planet in the fleet's system when that planet can cover fuel plus any cargo being loaded; otherwise it is paid from deuterium the fleet already carries (cargo is still loaded only from a planet). A planetless empire's Colony Ark is viable if it is on a paid route, or if it can pay the fuel to reach some unowned planet it could colonize.
 
+## D50 — Alliance membership (refines D23)
+An empire belongs to at most one alliance. `alliance_create` founds one (optional `name`, optional `invite` list) with the founder as its only member. Joining needs an invitation: a member issues `alliance_invite`, or the founder lists the invitee at creation, and the invitee may `alliance_join` from the next turn. An empire must leave (`alliance_leave`) on an earlier turn before joining another. An alliance with no members is dissolved. Alliance ids and membership are public; pending invitations are visible only to the alliance's members and the invitee. An eliminated empire leaves its alliance. Attacking an ally (planet or fleet), whether at launch or in battle on arrival, records a public `treaty_breach` and removes only the attacker from the alliance. Alliances never block orders.
+
+## D51 — What reaches observations, and when (refines D11, D48)
+Messages composed in turn t are delivered at turn t+1 and appear in that turn's observation only (rulers keep their own memory). A message may be addressed to an empire, an alliance (its members when sent) or `all` (every living empire); the sender and eliminated empires never receive. The observation at turn t+1 also carries the turn-t events the ruler is entitled to know: public events (alliance changes, treaty breaches, captures, colonizations, exile, restoration, elimination), espionage reports only for the spy, detections only for the spied-on empire, and otherwise events where the ruler is the actor or the counterpart (battles, transfers, invitations). It carries the ruler's orders that were rejected at turn t, each with a plain-language reason, and the public roster of rulers with their sovereignty status and alliance. Fleet departures are never shown to a target. The spy is not told how often it was detected.
+
+## D52 — Hostility is a record, not a declaration
+The engine's "war/hostility state" is the record of which empire pairs have fought and the last turn they did. The first battle between a pair emits `war_began`. Hostility never restricts orders and there is no peace order; ceasefires are social agreements.
+
+## D53 — Espionage mechanics (refines D19)
+A `spy` mission needs a scout in the fleet and a target planet in the fleet's system or an adjacent one; the scout observes from where it is, costs no fuel and uses the fleet's mission for the turn. The report (delivered next turn) is tiered by intel = spy Sensors - owner Sensors: tier 0 ownership and coarse activity; tier 1 resource bands (0-499, 500-1999, 2000-9999, 10000+), building bands (0, 1-2, 3-5, 6+) and a fleet size band; tier 2 exact resources and buildings with ship counts rounded to the nearest 5; tier 3 exact ships, the owner's technology levels and the destinations of its fleets that left the system. The banding and rounding are the bounded deterministic noise. Ships seen are those docked at the planet plus the owner's fleets in its system. The owner of a spied planet detects the scout with probability `clamp(50 - 15 x intel, 5, 95)` percent, rolled with the seeded engine RNG; detection reveals the spying empire to the owner only.
+
+## D54 — Attacking a fleet
+`attack` may target a foreign fleet. The attacker flies to the system the target occupied at launch; on arrival it fights the target if the target is in that system (idle or passing through), together with the target owner's other idle fleets there, using the D47 rules without planets, docked ships or Defense Grid, and nothing is captured. If the target has left, the attack finds nothing. A surviving attacker facing surviving defenders retreats as in D47. Every battle records hostility (D52) and counts towards both empires' ship statistics.
+
+## D55 — Transport, trade and recycling (refines D22)
+A `transport` mission may target any owned planet, including another empire's; on arrival the whole cargo is unloaded to whoever owns the planet then, and a transfer to another empire is a recorded `transfer` event. Nothing is unloaded on an unowned planet. A transport may also target a system to ferry cargo without unloading (e.g. fuel for stranded fleets). Recycling requires a recycler and collects up to recycler capacity bounded by free cargo room. Recyclers ending missions in the same system share its debris in proportion to their capacity, with the remainder handed out one unit at a time in a seeded order.
+
+## D56 — Fleet splitting and queue cancellation
+`split_fleet` moves the named ships of an idle fleet into a new idle fleet in the same system; at least one ship must stay, cargo stays with the original fleet and must still fit. Splitting is not a mission and a fleet that launched this turn cannot be split. `cancel` (target `construction`, `shipyard` or `research`) empties that queue, refunds 50% of each paid resource (rounded down) to the acting planet and loses progress (D20). Because every order is validated against S(t), a queue cancelled in turn t can be refilled from turn t+1.
+
+## D57 — Bounded authoritative state; append-only history
+The world state holds only the events of the most recently resolved turn and the messages not yet delivered or delivered this turn. Both were already delivered with the observations; the full history lives in the append-only turn log (submitted orders, accepted and rejected orders with reasons, events and the resulting state hash per turn), which together with the initial state and the ruleset version replays the run.
+
 # Status
 
 **There are no unresolved v1 questions from the original pre-implementation list.**
