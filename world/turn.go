@@ -5,10 +5,11 @@ type Order struct{EmpireID,Type,Actor,Target string;Params map[string]any}
 type TurnResult struct{Turn int;Accepted,Rejected []Order;Events []Event}
 func ResolveTurn(w *World,submitted map[string][]Order)(TurnResult,error){
  if w==nil{return TurnResult{},fmt.Errorf("nil world")}
- snap:=cloneWorld(w);res:=TurnResult{Turn:w.Turn};ids:=make([]string,0,len(submitted));for id:=range submitted{ids=append(ids,id)};sort.Strings(ids)
- for _,eid:=range ids{for _,o:=range submitted[eid]{if o.EmpireID!=eid||w.Empires[eid]==nil||o.Type==""{res.Rejected=append(res.Rejected,o);continue};if err:=validateOrder(snap,o);err!=nil{res.Rejected=append(res.Rejected,o);continue};res.Accepted=append(res.Accepted,o)}}
- // deterministic phase ordering; every validation above saw the same snapshot.
- for _,o:=range res.Accepted{if err:=applyOrder(w,o);err!=nil{res.Rejected=append(res.Rejected,o)}}
+ snap:=cloneWorld(w);res:=TurnResult{Turn:w.Turn};ids:=make([]string,0,len(submitted));for id:=range submitted{ids=append(ids,id)};sort.Strings(ids);var valid []Order
+ for _,eid:=range ids{for _,o:=range submitted[eid]{if o.EmpireID!=eid||w.Empires[eid]==nil||o.Type==""{res.Rejected=append(res.Rejected,o);continue};if err:=validateOrder(snap,o);err!=nil{res.Rejected=append(res.Rejected,o);continue};valid=append(valid,o)}}
+ // deterministic phase ordering; every validation above saw the same snapshot. Orders only touch their own empire's assets, so re-validating against the
+ // live world only catches same-empire conflicts (double-spent resources, a second queue/mission for the same planet/fleet) and never another empire's orders.
+ for _,o:=range valid{if err:=validateOrder(w,o);err!=nil{res.Rejected=append(res.Rejected,o);continue};if err:=applyOrder(w,o);err!=nil{res.Rejected=append(res.Rejected,o);continue};res.Accepted=append(res.Accepted,o)}
  advanceFleets(w);progressQueues(w);resolveArrivals(w);produce(w);updateSovereignty(w);w.Turn++
  res.Events=append(res.Events,w.Events...);return res,nil
 }
@@ -19,7 +20,7 @@ func validateOrder(w *World,o Order)error{switch o.Type{
  case"construct":p:=w.Planets[o.Actor];if p==nil||p.OwnerID!=o.EmpireID||p.Construction!=nil{return fmt.Errorf("planet unavailable")};base,ok:=BuildingBase[o.Target];if !ok{return fmt.Errorf("building")};cost:=scale(base,buildingLevel(p.Buildings,o.Target)+1);if !p.Resources.Enough(cost){return fmt.Errorf("resources")}
  case"research":e:=w.Empires[o.EmpireID];if e.Research!=nil{return fmt.Errorf("research busy")};base,ok:=TechBase[o.Target];if !ok{return fmt.Errorf("tech")};p:=w.Planets[o.Actor];if p==nil||p.OwnerID!=o.EmpireID{return fmt.Errorf("payer")};if !p.Resources.Enough(scale(base,techLevel(e.Tech,o.Target)+1)){return fmt.Errorf("resources")}
  case"build_ships":p:=w.Planets[o.Actor];if p==nil||p.OwnerID!=o.EmpireID||p.ShipyardQueue!=nil{return fmt.Errorf("shipyard")};n:=intParam(o,"quantity",1);cost,err:=shipCost(o.Target,n);if err!=nil||!p.Resources.Enough(cost){return fmt.Errorf("ships")};if o.Target=="colony_ark"&&w.Empires[o.EmpireID].Tech.Colonization<1{return fmt.Errorf("colonization")}
- case"form_fleet":p:=w.Planets[o.Actor];if p==nil||p.OwnerID!=o.EmpireID{return fmt.Errorf("planet")}
+ case"form_fleet":p:=w.Planets[o.Actor];if p==nil||p.OwnerID!=o.EmpireID{return fmt.Errorf("planet")};ships:=shipMapParam(o);if len(ships)==0{return fmt.Errorf("no ships")};for k,n:=range ships{if _,ok:=ShipSpecs[k];!ok||n<1||p.Ships[k]<n{return fmt.Errorf("ships")}}
  case"move","attack","spy","transport","recycle","colonize":f:=w.Fleets[o.Actor];if f==nil||f.OwnerID!=o.EmpireID||len(f.Route)>0{return fmt.Errorf("fleet")}
  case"message":if w.Empires[o.Target]==nil{return fmt.Errorf("recipient")}
  default:return fmt.Errorf("unsupported")
@@ -33,7 +34,10 @@ func applyOrder(w *World,o Order)error{switch o.Type{
  case"transport":return launch(w,o)
  case"message":w.Messages=append(w.Messages,Message{Turn:w.Turn+1,From:o.EmpireID,To:o.Target,Body:stringParam(o,"body"),Major:boolParam(o,"major")})
  };return nil}
-func launch(w *World,o Order)error{f:=w.Fleets[o.Actor];targetSystem:=o.Target;if p:=w.Planets[o.Target];p!=nil{targetSystem=p.SystemID};route:=shortest(w,f.SystemID,targetSystem);if len(route)<2&&f.SystemID!=targetSystem{return fmt.Errorf("route")};fuel:=0;for k,n:=range f.Ships{fuel+=ShipSpecs[k].Fuel*n};fuel*=max(0,len(route)-1);discount:=100-5*w.Empires[o.EmpireID].Tech.Propulsion;if discount<0{discount=0};fuel=(fuel*discount+99)/100;source:=ownedPlanetAt(w,o.EmpireID,f.SystemID);if source==nil||source.Resources.Deuterium<fuel{return fmt.Errorf("fuel")};source.Resources.Deuterium-=fuel;f.Route=route;f.RouteIndex=0;f.Mission=o.Type;f.Target=o.Target;if o.Type=="transport"{cargo:=resourceParam(o);if !source.Resources.Enough(cargo){return fmt.Errorf("cargo")};source.Resources=source.Resources.Sub(cargo);f.Cargo=f.Cargo.Add(cargo)};return nil}
+func launch(w *World,o Order)error{f:=w.Fleets[o.Actor];targetSystem:=o.Target;if p:=w.Planets[o.Target];p!=nil{targetSystem=p.SystemID};route:=shortest(w,f.SystemID,targetSystem);if len(route)<2&&f.SystemID!=targetSystem{return fmt.Errorf("route")};fuel:=0;for k,n:=range f.Ships{fuel+=ShipSpecs[k].Fuel*n};fuel*=max(0,len(route)-1);discount:=100-5*w.Empires[o.EmpireID].Tech.Propulsion;if discount<0{discount=0};fuel=(fuel*discount+99)/100;source:=ownedPlanetAt(w,o.EmpireID,f.SystemID);if source==nil{return fmt.Errorf("fuel")}
+ // every check happens before any mutation so a rejected launch has no side effects.
+ var cargo Resources;if o.Type=="transport"{cargo=resourceParam(o);room:=0;for k,n:=range f.Ships{room+=ShipSpecs[k].Cargo*n};room-=f.Cargo.Metal+f.Cargo.Crystal+f.Cargo.Deuterium;if cargo.Metal<0||cargo.Crystal<0||cargo.Deuterium<0||cargo.Metal>room||cargo.Crystal>room||cargo.Deuterium>room||cargo.Metal+cargo.Crystal+cargo.Deuterium>room{return fmt.Errorf("cargo")}};need:=cargo;need.Deuterium+=fuel;if !source.Resources.Enough(need){return fmt.Errorf("fuel/cargo")}
+ source.Resources=source.Resources.Sub(need);f.Cargo=f.Cargo.Add(cargo);f.Route=route;f.RouteIndex=0;f.Mission=o.Type;f.Target=o.Target;return nil}
 func shortest(w *World,a,b string)[]string{if a==b{return []string{a}};q:=[]string{a};prev:=map[string]string{a:""};for len(q)>0{c:=q[0];q=q[1:];for _,n:=range w.Systems[c].Neighbors{if _,ok:=prev[n];ok{continue};prev[n]=c;if n==b{path:=[]string{b};for x:=c;x!="";x=prev[x]{path=append(path,x)};for i,j:=0,len(path)-1;i<j;i,j=i+1,j-1{path[i],path[j]=path[j],path[i]};return path};q=append(q,n)}};return nil}
 func advanceFleets(w *World){ids:=fleetIDs(w);for _,id:=range ids{f:=w.Fleets[id];if len(f.Route)<2{continue};speed:=1+w.Empires[f.OwnerID].Tech.Propulsion/3;for i:=0;i<speed&&f.RouteIndex<len(f.Route)-1;i++{f.RouteIndex++;f.SystemID=f.Route[f.RouteIndex]}}}
 func resolveArrivals(w *World){for _,id:=range fleetIDs(w){f:=w.Fleets[id];if len(f.Route)>0&&f.RouteIndex==len(f.Route)-1{mission:=f.Mission;f.Route=nil;f.RouteIndex=0;switch mission{case"transport":if p:=w.Planets[f.Target];p!=nil&&p.OwnerID==f.OwnerID{p.Resources=p.Resources.Add(f.Cargo);f.Cargo=Resources{}};case"colonize":colonize(w,f);case"attack":combat(w,f);case"spy":spy(w,f);case"recycle":recycle(w,f)};f.Mission=""}}}
