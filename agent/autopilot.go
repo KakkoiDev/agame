@@ -20,7 +20,7 @@ func Autopilot(w *world.World, eid string) Decision {
 	for _,f:=range ownedFleets(w,eid){
 		if len(f.Route)>0{continue}
 		if f.Ships["colony_ark"]>0 {
-			if target:=nearestEmptyPlanet(w,f.SystemID);target!=""{
+			if target:=nearestEmptyPlanet(w,f.SystemID);target!=""&&canLaunch(w,eid,f,target){
 				return one("colonize",f.ID,target,nil,"Colonization fleet dispatched to "+target+".")
 			}
 		}
@@ -93,5 +93,7 @@ func hasOwnedPlanetAt(w *world.World,eid,system string)bool{for _,p:=range w.Pla
 func nearestEmptyPlanet(w *world.World,from string)string{return nearestPlanet(w,from,func(p *world.Planet)bool{return p.OwnerID==""})}
 func nearestEnemyPlanet(w *world.World,eid,from string)string{return nearestPlanet(w,from,func(p *world.Planet)bool{return p.OwnerID!=""&&p.OwnerID!=eid})}
 func nearestPlanet(w *world.World,from string,ok func(*world.Planet)bool)string{q:=[]string{from};seen:=map[string]bool{from:true};for len(q)>0{s:=q[0];q=q[1:];ids:=append([]string(nil),w.Systems[s].Planets...);sort.Strings(ids);for _,id:=range ids{if ok(w.Planets[id]){return id}};ns:=append([]string(nil),w.Systems[s].Neighbors...);sort.Strings(ns);for _,n:=range ns{if !seen[n]{seen[n]=true;q=append(q,n)}}};return ""}
-func exileDecision(w *world.World,eid string)Decision{for _,f:=range ownedFleets(w,eid){if len(f.Route)==0&&f.Ships["colony_ark"]>0{if t:=nearestEmptyPlanet(w,f.SystemID);t!=""{return one("colonize",f.ID,t,nil,"Exile government attempting recolonization.")}}};return Decision{Statement:"Government in exile has no immediate recovery route."}}
+func exileDecision(w *world.World,eid string)Decision{for _,f:=range ownedFleets(w,eid){if len(f.Route)==0&&f.Ships["colony_ark"]>0{if t:=nearestEmptyPlanet(w,f.SystemID);t!=""&&canLaunch(w,eid,f,t){return one("colonize",f.ID,t,nil,"Exile government attempting recolonization.")}}};return Decision{Statement:"Government in exile has no immediate recovery route."}}
 func describeOrder(o world.Order)string{if o.Target!=""{return fmt.Sprintf("%s %s → %s",o.Type,o.Actor,o.Target)};return fmt.Sprintf("%s %s",o.Type,o.Actor)}
+// canLaunch: fuel is paid by an owned planet in the fleet's system, so a fleet elsewhere can only act in place; ordering anything else is always rejected.
+func canLaunch(w *world.World,eid string,f *world.Fleet,target string)bool{return hasOwnedPlanetAt(w,eid,f.SystemID)||w.Planets[target].SystemID==f.SystemID}

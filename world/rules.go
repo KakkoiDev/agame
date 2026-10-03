@@ -28,4 +28,6 @@ func buildingLevel(b Buildings, k string) int {
 func incBuilding(b *Buildings,k string){ switch k{case"metal_mine":b.MetalMine++;case"crystal_mine":b.CrystalMine++;case"deuterium_extractor":b.DeuteriumExtractor++;case"infrastructure":b.Infrastructure++;case"research_lab":b.ResearchLab++;case"shipyard":b.Shipyard++;case"defense_grid":b.DefenseGrid++}}
 func techLevel(t Tech,k string)int{switch k{case"industry":return t.Industry;case"propulsion":return t.Propulsion;case"weapons":return t.Weapons;case"shields":return t.Shields;case"sensors":return t.Sensors;case"colonization":return t.Colonization};return -1}
 func incTech(t *Tech,k string){switch k{case"industry":t.Industry++;case"propulsion":t.Propulsion++;case"weapons":t.Weapons++;case"shields":t.Shields++;case"sensors":t.Sensors++;case"colonization":t.Colonization++}}
-func shipCost(kind string,n int)(Resources,error){s,ok:=ShipSpecs[kind];if !ok||n<1{return Resources{},fmt.Errorf("invalid ship batch")};return Resources{s.Cost.Metal*n,s.Cost.Crystal*n,s.Cost.Deuterium*n},nil}
+// MaxShipBatch bounds one shipyard batch so cost arithmetic can never overflow int (e.g. 1<<62 scouts cost 0 after wraparound).
+const MaxShipBatch=1<<20
+func shipCost(kind string,n int)(Resources,error){s,ok:=ShipSpecs[kind];if !ok||n<1||n>MaxShipBatch{return Resources{},fmt.Errorf("invalid ship batch")};return Resources{s.Cost.Metal*n,s.Cost.Crystal*n,s.Cost.Deuterium*n},nil}
