@@ -3,6 +3,7 @@ globalThis.Buffer ||= Buffer;
 import git from "isomorphic-git";
 import LightningFS from "@isomorphic-git/lightning-fs";
 import { GitHubRemote } from "./jikko-github.js";
+import { zip, unzip } from "./zip.js";
 
 export class UniverseLibrary {
   constructor(fs, dir="/library") { this.fs=fs; this.dir=dir; this.remote=null; }
@@ -48,6 +49,27 @@ export class UniverseLibrary {
     const journal={turn:world.Turn,statements:cognition.statements||{},events:cognition.result?.events||[]};
     await this.write("jikko-turn.json",JSON.stringify(journal,null,2));
     return this.commit("Turn "+world.Turn,"turn");
+  }
+  // exportCurrent packs the checked-out universe's files (no Git history)
+  // into a portable ZIP (D41). Credentials never live in these files (D40).
+  async exportCurrent() {
+    const ref=await this.current(); if(!ref?.startsWith("universe/"))throw new Error("No universe checked out");
+    return {ref,bytes:zip(await this.snapshot())};
+  }
+  // importUniverse restores a universe ZIP as a new universe branch with a new
+  // id; it never overwrites an existing universe (D35).
+  async importUniverse(bytes,id) {
+    const files=unzip(bytes); if(!files["world.json"])throw new Error("The ZIP has no world.json");
+    const world=JSON.parse(new TextDecoder().decode(files["world.json"]));
+    if(typeof world.Turn!=="number"||!world.Empires)throw new Error("world.json is not an AGame universe");
+    let meta={}; try{meta=JSON.parse(new TextDecoder().decode(files["universe.json"]||new Uint8Array()))}catch{}
+    const name=(meta.name||"Imported universe")+" (imported)", ref=this.branchName(id,name);
+    if((await git.listBranches({fs:this.fs,dir:this.dir})).includes(ref))throw new Error("A universe with this id already exists");
+    await git.branch({fs:this.fs,dir:this.dir,ref,checkout:true});
+    for(const f of await this.fs.promises.readdir(this.dir)) if(f!==".git"&&!files[f]) await this.fs.promises.unlink(this.dir+"/"+f);
+    for(const [path,data] of Object.entries(files)) if(!path.includes("/")) await this.fs.promises.writeFile(this.dir+"/"+path,data);
+    await this.write("universe.json",JSON.stringify({...meta,id,name,imported:new Date().toISOString(),source:meta.id||null},null,2));
+    await this.commit("Import universe at turn "+world.Turn,"import"); return {ref,world};
   }
   async backupCurrent() {
     if(!this.remote)throw new Error("GitHub is not connected");

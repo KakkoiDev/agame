@@ -3,12 +3,15 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 	"syscall/js"
 
 	"github.com/KakkoiDev/agame/agent"
+	"github.com/KakkoiDev/agame/engine"
 	"github.com/KakkoiDev/agame/world"
 )
 
@@ -36,30 +39,33 @@ func newUniverse(_ js.Value, args []js.Value) any {
 	return encode(w)
 }
 
+// autoTurn plays one turn with every ruler on the deterministic autopilot,
+// through engine.Runner: the same code path as `agame run`.
 func autoTurn(_ js.Value, args []js.Value) any {
 	w, err := decodeWorld(args)
 	if err != nil {
 		return fail(err)
 	}
-	submitted := map[string][]world.Order{}
-	statements := map[string]string{}
+	agents := map[string]agent.Agent{}
 	for id := range w.Empires {
-		d := agent.Autopilot(w, id)
-		for i := range d.Orders {
-			d.Orders[i].EmpireID = id
-		}
-		submitted[id] = d.Orders
-		statements[id] = d.Statement
+		agents[id] = agent.AutopilotAgent{}
 	}
-	result, err := world.ResolveTurn(w, submitted)
+	r := &engine.Runner{World: w, Agents: agents, Budget: engine.Budget{TurnLimit: world.CanonicalTurnLimit}}
+	rec, err := r.Step(context.Background())
 	if err != nil {
 		return fail(err)
 	}
+	statements := map[string]string{}
+	for _, d := range rec.Decisions {
+		statements[d.Empire] = d.Statement
+	}
 	payload := struct {
-		World      *world.World      `json:"world"`
-		Result     world.TurnResult  `json:"result"`
-		Statements map[string]string `json:"statements"`
-	}{w, result, statements}
+		World      *world.World            `json:"world"`
+		Result     world.TurnResult        `json:"result"`
+		Statements map[string]string       `json:"statements"`
+		Decisions  []engine.DecisionRecord `json:"decisions"`
+		End        *world.End              `json:"end,omitempty"`
+	}{w, rec.Result, statements, rec.Decisions, rec.End}
 	return encode(payload)
 }
 
@@ -85,6 +91,8 @@ func advanceTurn(_ js.Value, args []js.Value) any {
 	return encode(payload)
 }
 
+// summary is the observer view of a world: per-empire standings plus the
+// public diplomatic state.
 func summary(_ js.Value, args []js.Value) any {
 	w, err := decodeWorld(args)
 	if err != nil {
@@ -101,12 +109,33 @@ func summary(_ js.Value, args []js.Value) any {
 		Crystal    int    `json:"crystal"`
 		Deuterium  int    `json:"deuterium"`
 		Tech       int    `json:"tech"`
+		Alliance   string `json:"alliance,omitempty"`
+		Rank       int    `json:"rank"`
+		Score      int    `json:"score"`
+		FleetValue int    `json:"fleet_value"`
+	}
+	type alliance struct {
+		ID      string   `json:"id"`
+		Name    string   `json:"name"`
+		Members []string `json:"members"`
+	}
+	type war struct {
+		A    string `json:"a"`
+		B    string `json:"b"`
+		Last int    `json:"last"`
 	}
 	out := struct {
-		Seed    int64    `json:"seed"`
-		Turn    int      `json:"turn"`
-		Empires []empire `json:"empires"`
-	}{Seed: w.Seed, Turn: w.Turn}
+		Seed      int64      `json:"seed"`
+		Turn      int        `json:"turn"`
+		Empires   []empire   `json:"empires"`
+		Alliances []alliance `json:"alliances"`
+		Wars      []war      `json:"wars"`
+		End       *world.End `json:"end,omitempty"`
+	}{Seed: w.Seed, Turn: w.Turn, End: world.CheckEnd(w, world.CanonicalTurnLimit)}
+	standing := map[string]world.Standing{}
+	for _, st := range world.Standings(w) {
+		standing[st.Empire] = st
+	}
 	ids := make([]string, 0, len(w.Empires))
 	for id := range w.Empires {
 		ids = append(ids, id)
@@ -114,21 +143,28 @@ func summary(_ js.Value, args []js.Value) any {
 	sort.Strings(ids)
 	for _, id := range ids {
 		e := w.Empires[id]
-		x := empire{ID: e.ID, Name: e.Name, Exile: e.Exile, Eliminated: e.Eliminated, Tech: e.Tech.Industry + e.Tech.Propulsion + e.Tech.Weapons + e.Tech.Shields + e.Tech.Sensors + e.Tech.Colonization}
-		for _, p := range w.Planets {
-			if p.OwnerID == e.ID {
-				x.Planets++
-				x.Metal += p.Resources.Metal
-				x.Crystal += p.Resources.Crystal
-				x.Deuterium += p.Resources.Deuterium
-			}
-		}
+		st := standing[id]
+		x := empire{ID: e.ID, Name: e.Name, Exile: e.Exile, Eliminated: e.Eliminated, Tech: st.TechLevels, Planets: st.Planets,
+			Metal: st.Stored.Metal, Crystal: st.Stored.Crystal, Deuterium: st.Stored.Deuterium, Alliance: e.AllianceID, Rank: st.Rank, Score: st.Score, FleetValue: st.FleetValue}
 		for _, f := range w.Fleets {
 			if f.OwnerID == e.ID {
 				x.Fleets++
 			}
 		}
 		out.Empires = append(out.Empires, x)
+	}
+	for _, id := range world.AllianceIDs(w) {
+		a := w.Alliances[id]
+		out.Alliances = append(out.Alliances, alliance{ID: a.ID, Name: a.Name, Members: append([]string(nil), a.Members...)})
+	}
+	keys := make([]string, 0, len(w.Hostilities))
+	for k := range w.Hostilities {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		a, b, _ := strings.Cut(k, "|")
+		out.Wars = append(out.Wars, war{A: a, B: b, Last: w.Hostilities[k]})
 	}
 	return encode(out)
 }

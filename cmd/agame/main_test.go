@@ -1,7 +1,10 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,6 +14,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/KakkoiDev/agame/engine"
 	"github.com/KakkoiDev/agame/run"
 	"github.com/KakkoiDev/agame/world"
 )
@@ -151,5 +155,212 @@ func TestCLINewTurnLifecycle(t *testing.T) {
 	}
 	if out, err := cli("bogus"); err == nil || !strings.Contains(out, "usage") {
 		t.Fatalf("bogus command: %v %s", err, out)
+	}
+}
+
+func TestRunReplayAndResult(t *testing.T) {
+	s := run.Store{Dir: filepath.Join(t.TempDir(), "run")}
+	ctx := context.Background()
+	var out strings.Builder
+	if err := command(ctx, s, "new", []string{"9"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	var h run.Header
+	if err := s.LoadJSON(run.HeaderFile, &h); err != nil || h.Ruleset != world.RulesetVersion || h.Seed != 9 || h.InitialHash == "" {
+		t.Fatalf("header %+v %v", h, err)
+	}
+	for _, bad := range [][]string{{}, {"0"}, {"x"}} {
+		if err := command(ctx, s, "run", bad, &out); err == nil {
+			t.Fatalf("run %v accepted", bad)
+		}
+	}
+	t.Setenv("AGAME_TURN_LIMIT", "6")
+	out.Reset()
+	if err := command(ctx, s, "run", []string{"4"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(out.String(), "accepted") != 4 {
+		t.Fatalf("output %s", out.String())
+	}
+	if err := s.LoadJSON(run.HeaderFile, &h); err != nil || len(h.Roster) != 8 || h.Roster[0].Agent != "autopilot" || h.PromptVersion == "" {
+		t.Fatalf("roster %+v", h)
+	}
+	out.Reset()
+	if err := command(ctx, s, "replay", nil, &out); err != nil || !strings.Contains(out.String(), "replayed 4 turns") {
+		t.Fatalf("replay: %v %s", err, out.String())
+	}
+	out.Reset()
+	if err := command(ctx, s, "observe", []string{"e02", "3"}, &out); err != nil || !strings.Contains(out.String(), "turn 3; you are e02") {
+		t.Fatalf("observe: %v %s", err, out.String())
+	}
+	for _, bad := range [][]string{{"e02"}, {"e02", "x"}, {"e02", "40"}, {"e99", "1"}} {
+		if err := command(ctx, s, "observe", bad, &out); err == nil {
+			t.Fatalf("observe %v accepted", bad)
+		}
+	}
+	out.Reset()
+	if err := command(ctx, s, "run", []string{"10"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "run ended at turn 6: turn_limit") || !strings.Contains(out.String(), "1. ") {
+		t.Fatalf("output %s", out.String())
+	}
+	var res Result
+	if err := s.LoadJSON(run.ResultFile, &res); err != nil || res.End.Reason != world.EndTurnLimit || len(res.Standings) != 8 || res.Ops["e00"].Turns != 6 {
+		t.Fatalf("result %+v %v", res, err)
+	}
+	if err := command(ctx, s, "turn", nil, &out); err == nil || !strings.Contains(err.Error(), "already ended") {
+		t.Fatalf("ended run advanced: %v", err)
+	}
+	n, want := 0, 0
+	for _, o := range res.Ops {
+		want += o.Turns
+	}
+	if err := s.ReadJSONL(run.DecisionsFile, func([]byte) error { n++; return nil }); err != nil || n != want || n < 40 {
+		t.Fatalf("decision records %d %v", n, err)
+	}
+	n = 0
+	if err := s.ReadJSONL(run.ReflectionsFile, func(b []byte) error {
+		var r engine.ReflectionRecord
+		n++
+		if err := json.Unmarshal(b, &r); err != nil || len(r.Triggers) == 0 || r.Offered {
+			return fmt.Errorf("reflection %s", b)
+		}
+		return nil
+	}); err != nil || n == 0 {
+		t.Fatalf("reflections %d %v", n, err)
+	}
+	// A tampered event log fails the replay.
+	ev := filepath.Join(s.Dir, run.EventsFile)
+	orig, _ := os.ReadFile(ev)
+	if err := os.WriteFile(ev, []byte(strings.Replace(string(orig), "production", "prodution", 1)), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := command(ctx, s, "replay", nil, &out); err == nil || !strings.Contains(err.Error(), "diverges") {
+		t.Fatalf("tampered event log replayed: %v", err)
+	}
+	if err := os.WriteFile(ev, append(orig, orig[:strings.Index(string(orig), "\n")+1]...), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := command(ctx, s, "replay", nil, &out); err == nil || !strings.Contains(err.Error(), "entries") {
+		t.Fatalf("extra event log entry replayed: %v", err)
+	}
+	if err := os.WriteFile(ev, orig, 0644); err != nil {
+		t.Fatal(err)
+	}
+	// A world that does not match its log fails the replay.
+	w, _ := s.Load()
+	w.Planets[w.Empires["e00"].HomeworldID].Resources.Metal++
+	if err := s.Save(w); err != nil {
+		t.Fatal(err)
+	}
+	if err := command(ctx, s, "replay", nil, &out); err == nil || !strings.Contains(err.Error(), "but world.json has") {
+		t.Fatalf("tampered world replayed: %v", err)
+	}
+	if err := command(ctx, run.Store{Dir: t.TempDir()}, "replay", nil, &out); err == nil {
+		t.Fatal("replay without a run")
+	}
+}
+
+func TestDashboardShowsDiplomacyBattlesAndRejections(t *testing.T) {
+	s := run.Store{Dir: t.TempDir()}
+	w, err := world.Generate(1, names)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Create(w, run.Header{}); err != nil {
+		t.Fatal(err)
+	}
+	h := w.Planets[w.Empires["e00"].HomeworldID]
+	target := w.Planets[w.Systems[h.SystemID].Planets[1]]
+	target.OwnerID = "e01"
+	w.Fleets["fa"] = &world.Fleet{ID: "fa", OwnerID: "e00", SystemID: h.SystemID, Ships: world.Ships{"cruiser": 4}}
+	res, err := world.ResolveTurn(w, map[string][]world.Order{
+		"e00": {{EmpireID: "e00", Type: "attack", Actor: "fa", Target: target.ID}},
+		"e02": {{EmpireID: "e02", Type: "alliance_create", Params: map[string]any{"name": "<b>Pact</b>", "invite": []any{"e03"}}}},
+		"e04": {{EmpireID: "e04", Type: "construct", Actor: "nowhere", Target: "metal_mine"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Commit(w, res); err != nil {
+		t.Fatal(err)
+	}
+	body := get(dashboard(s), "GET", "/").Body.String()
+	for _, want := range []string{"Standings", "&lt;b&gt;Pact&lt;/b&gt;", "Iona", "Cassian – Malrec", "captured", "battle", "alliance_created",
+		"Rejected orders (turn 0)", `construct nowhere metal_mine`, `unknown planet &#34;nowhere&#34;`, "Score"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("dashboard lacks %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "<b>Pact") {
+		t.Fatal("alliance name not escaped")
+	}
+	// An ended run says so.
+	w.Turn = world.CanonicalTurnLimit
+	if err := s.Save(w); err != nil {
+		t.Fatal(err)
+	}
+	if body := get(dashboard(s), "GET", "/").Body.String(); !strings.Contains(body, "Run ended at turn 600: turn_limit") {
+		t.Fatal("end not shown")
+	}
+}
+
+func TestDashboardDecisionsFilterAndObservation(t *testing.T) {
+	s := run.Store{Dir: filepath.Join(t.TempDir(), "run")}
+	ctx := context.Background()
+	var out strings.Builder
+	if err := command(ctx, s, "new", []string{"4"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if err := command(ctx, s, "run", []string{"5"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	h := dashboard(s)
+	body := get(h, "GET", "/").Body.String()
+	for _, want := range []string{"Last turn decisions", "autopilot", `href="/observe?empire=e03&amp;turn=4"`, `href="/?empire=e02"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("dashboard lacks %q:\n%s", want, body)
+		}
+	}
+	f := get(h, "GET", "/?empire=e02").Body.String()
+	if !strings.Contains(f, "showing Aya") || strings.Contains(f, `observe?empire=e03&amp;turn`) || !strings.Contains(f, `observe?empire=e02&amp;turn=4`) {
+		t.Fatalf("filtered dashboard:\n%s", f)
+	}
+	rec := get(h, "GET", "/observe?empire=e03&turn=2")
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "Kael at turn 2") || !strings.Contains(rec.Body.String(), "turn 2; you are e03") {
+		t.Fatalf("observe %d:\n%s", rec.Code, rec.Body.String())
+	}
+	for path, code := range map[string]int{"/observe?empire=e99&turn=1": 404, "/observe?empire=e03&turn=x": 400, "/observe?empire=e03&turn=99": 404} {
+		if c := get(h, "GET", path).Code; c != code {
+			t.Fatalf("%s -> %d, want %d", path, c, code)
+		}
+	}
+}
+
+func TestSuiteRunsEverySeedToItsEnd(t *testing.T) {
+	s := run.Store{Dir: t.TempDir()}
+	t.Setenv("AGAME_TURN_LIMIT", "5")
+	var out strings.Builder
+	if err := command(context.Background(), s, "suite", []string{"3", "4"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"seed 3: ended at turn 5 (turn_limit)", "seed 4: ended at turn 5 (turn_limit)", "  1. "} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("suite output lacks %q:\n%s", want, out.String())
+		}
+	}
+	// Running it again resumes nothing and reports the same results.
+	var again strings.Builder
+	if err := command(context.Background(), s, "suite", []string{"3", "4"}, &again); err != nil || again.String() != out.String() {
+		t.Fatalf("rerun: %v\n%s", err, again.String())
+	}
+	if err := command(context.Background(), run.Store{Dir: filepath.Join(s.Dir, "seed-3")}, "replay", nil, &out); err != nil {
+		t.Fatal(err)
+	}
+	for _, bad := range [][]string{{}, {"x"}} {
+		if err := command(context.Background(), s, "suite", bad, &out); err == nil {
+			t.Fatalf("suite %v accepted", bad)
+		}
 	}
 }

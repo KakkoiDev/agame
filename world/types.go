@@ -44,6 +44,9 @@ type Fleet struct {
 	Route                 []string
 	RouteIndex            int
 	Mission, Target       string
+	// Blocked marks an attacker left in place by a stalemate with no route
+	// to retreat along; it must move out before any other mission (D61).
+	Blocked bool `json:",omitempty"`
 }
 type Empire struct {
 	ID, Name, HomeworldID string
@@ -51,10 +54,40 @@ type Empire struct {
 	Tech                  Tech
 	Research              *Queue
 	AllianceID            string
+	// Rejected holds this empire's orders the engine rejected on the most
+	// recently resolved turn, with reasons, so the ruler can learn from them.
+	Rejected []Rejection `json:",omitempty"`
+	Stats    Stats
 }
+
+// Stats are raw engine-recorded measurements (spec/benchmark.md, Metrics).
+type Stats struct {
+	ShipsBuilt, ShipsLost, ShipsDestroyed int
+	Battles, Captures, PlanetsLost        int
+	Colonies, SpyMissions, Detected       int
+	MessagesSent, AlliancesJoined         int
+	Breaches                              int
+	ResourcesSent, ResourcesReceived      int
+	DebrisCollected                       int
+	// EliminatedTurn is the turn the empire was eliminated, 0 while alive.
+	EliminatedTurn int
+}
+
+// Alliance is an engine-recognised alliance (spec/game.md, Diplomacy
+// mechanics). Membership is public; Invited lists empires that may join.
+type Alliance struct {
+	ID, Name, Founder string
+	Founded           int
+	Members, Invited  []string
+}
+
+// Message is a diplomatic message. To is the address the sender used (an
+// empire id, an alliance id or "all"); Recipients are the empires it was
+// resolved to when sent. It is delivered on Turn (spec/diplomacy.md).
 type Message struct {
 	Turn           int
 	From, To, Body string
+	Recipients     []string `json:",omitempty"`
 	Major          bool
 }
 type Event struct {
@@ -62,7 +95,10 @@ type Event struct {
 	Type     string `json:"type,omitempty"`
 	EmpireID string `json:"empire_id,omitempty"`
 	Target   string `json:"target,omitempty"`
-	Detail   string `json:"detail,omitempty"`
+	// Other is the counterpart empire (defender, recipient, victim...).
+	Other  string     `json:"other,omitempty"`
+	Detail string     `json:"detail,omitempty"`
+	Report *SpyReport `json:"report,omitempty"`
 }
 type World struct {
 	Seed      int64
@@ -71,9 +107,14 @@ type World struct {
 	Planets   map[string]*Planet
 	Empires   map[string]*Empire
 	Fleets    map[string]*Fleet
-	Messages  []Message
-	Events    []Event
-	NextFleet int
+	Alliances map[string]*Alliance `json:",omitempty"`
+	// Hostilities maps an empire pair "a|b" (a < b) to the last turn they
+	// fought. It is a record of combat, not a declared state (D52).
+	Hostilities  map[string]int `json:",omitempty"`
+	Messages     []Message
+	Events       []Event
+	NextFleet    int
+	NextAlliance int `json:",omitempty"`
 }
 
 // Order types (spec/agents.md). Fleet missions reuse the fleet order names.
@@ -89,6 +130,20 @@ const (
 	OrderRecycle    = "recycle"
 	OrderColonize   = "colonize"
 	OrderMessage    = "message"
+
+	OrderSplitFleet     = "split_fleet"
+	OrderCancel         = "cancel"
+	OrderAllianceCreate = "alliance_create"
+	OrderAllianceInvite = "alliance_invite"
+	OrderAllianceJoin   = "alliance_join"
+	OrderAllianceLeave  = "alliance_leave"
+)
+
+// Queue names accepted by the cancel order.
+const (
+	QueueConstruction = "construction"
+	QueueShipyard     = "shipyard"
+	QueueResearch     = "research"
 )
 
 // Ship classes (spec/game.md, Ships).

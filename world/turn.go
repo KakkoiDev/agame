@@ -1,6 +1,7 @@
 package world
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 )
@@ -9,48 +10,83 @@ type Order struct {
 	EmpireID, Type, Actor, Target string
 	Params                        map[string]any
 }
+
+// TurnResult is the outcome of one resolved turn. Submitted is the complete
+// input (per empire, in submission order) so a run can be replayed from the
+// initial state; StateHash is the hash of S(t+1).
 type TurnResult struct {
-	Turn     int     `json:"turn"`
-	Accepted []Order `json:"accepted"`
-	Rejected []Order `json:"rejected"`
-	Events   []Event `json:"events"`
+	Turn      int                `json:"turn"`
+	Submitted map[string][]Order `json:"submitted,omitempty"`
+	Accepted  []Order            `json:"accepted"`
+	Rejected  []Rejection        `json:"rejected"`
+	Events    []Event            `json:"events"`
+	StateHash string             `json:"state_hash"`
 }
 
+// ResolveTurn closes the decision barrier: it validates every submitted order
+// against the same frozen S(t), applies the valid ones in empire-ID and then
+// submission order, runs the turn phases and produces S(t+1).
 func ResolveTurn(w *World, submitted map[string][]Order) (TurnResult, error) {
 	if w == nil {
 		return TurnResult{}, fmt.Errorf("nil world")
 	}
+	// S(t) carries only the previous turn's events and the messages due now;
+	// both were delivered with the observations, and the append-only turn log
+	// keeps the history (D56).
+	w.Events = nil
+	var pending []Message
+	for _, m := range w.Messages {
+		if m.Turn > w.Turn {
+			pending = append(pending, m)
+		}
+	}
+	w.Messages = pending
 	snap := cloneWorld(w)
-	res := TurnResult{Turn: w.Turn}
+	res := TurnResult{Turn: w.Turn, Submitted: submitted}
 	firstEvent := len(w.Events)
 	ids := make([]string, 0, len(submitted))
 	for id := range submitted {
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
+	for _, e := range w.Empires {
+		e.Rejected = nil
+	}
+	reject := func(submitter string, o Order, err error) {
+		r := Rejection{Order: o, Reason: err.Error()}
+		res.Rejected = append(res.Rejected, r)
+		if e := w.Empires[submitter]; e != nil && len(e.Rejected) < MaxFeedbackRejections {
+			e.Rejected = append(e.Rejected, boundedRejection(r))
+		}
+	}
 	var valid []Order
 	for _, eid := range ids {
 		for _, o := range submitted[eid] {
-			if o.EmpireID != eid || w.Empires[eid] == nil || o.Type == "" {
-				res.Rejected = append(res.Rejected, o)
-				continue
+			switch {
+			case o.EmpireID != eid:
+				reject(eid, o, fmt.Errorf("order empire %q does not match submitter %q", o.EmpireID, eid))
+			case o.Type == "":
+				reject(eid, o, fmt.Errorf("missing order type"))
+			default:
+				if err := validateOrder(snap, o); err != nil {
+					reject(eid, o, err)
+				} else {
+					valid = append(valid, o)
+				}
 			}
-			if err := validateOrder(snap, o); err != nil {
-				res.Rejected = append(res.Rejected, o)
-				continue
-			}
-			valid = append(valid, o)
 		}
 	}
-	// deterministic phase ordering; every validation above saw the same snapshot. Orders only touch their own empire's assets, so re-validating against the
-	// live world only catches same-empire conflicts (double-spent resources, a second queue/mission for the same planet/fleet) and never another empire's orders.
+	// Every validation above saw the same snapshot. Orders only touch their
+	// own empire's assets, so re-validating against the live world only
+	// catches same-empire conflicts (double-spent resources, a second queue or
+	// mission for the same planet/fleet) and never another empire's orders.
 	for _, o := range valid {
 		if err := validateOrder(w, o); err != nil {
-			res.Rejected = append(res.Rejected, o)
+			reject(o.EmpireID, o, err)
 			continue
 		}
 		if err := applyOrder(w, o); err != nil {
-			res.Rejected = append(res.Rejected, o)
+			reject(o.EmpireID, o, err)
 			continue
 		}
 		res.Accepted = append(res.Accepted, o)
@@ -62,9 +98,34 @@ func ResolveTurn(w *World, submitted map[string][]Order) (TurnResult, error) {
 	updateSovereignty(w)
 	w.Turn++
 	res.Events = append(res.Events, w.Events[firstEvent:]...)
+	res.StateHash = StateHash(w)
 	return res, nil
 }
-func cloneWorld(w *World) *World { // validation only needs immutable ownership/resources; JSON-free explicit copy is cheap enough.
+
+// Bounds on the rejection feedback kept in S(t+1): it reaches the ruler's
+// next observation, so a runaway agent must not be able to bloat the state.
+const (
+	MaxFeedbackRejections = 32
+	MaxFeedbackParamBytes = 512
+)
+
+func boundedRejection(r Rejection) Rejection {
+	if b, err := json.Marshal(r.Params); err != nil || len(b) > MaxFeedbackParamBytes {
+		r.Params = map[string]any{"omitted": "params too large to echo back"}
+	}
+	for _, x := range []struct {
+		s *string
+		n int
+	}{{&r.Actor, 64}, {&r.Target, 64}, {&r.Type, 64}, {&r.Reason, 300}} {
+		if len(*x.s) > x.n {
+			*x.s = (*x.s)[:x.n] + "…"
+		}
+	}
+	return r
+}
+
+// cloneWorld copies what validation reads and application mutates in place.
+func cloneWorld(w *World) *World {
 	c := *w
 	c.Planets = map[string]*Planet{}
 	for id, p := range w.Planets {
@@ -81,165 +142,14 @@ func cloneWorld(w *World) *World { // validation only needs immutable ownership/
 		x := *f
 		c.Fleets[id] = &x
 	}
+	c.Alliances = map[string]*Alliance{}
+	for id, a := range w.Alliances {
+		x := *a
+		x.Members = append([]string(nil), a.Members...)
+		x.Invited = append([]string(nil), a.Invited...)
+		c.Alliances[id] = &x
+	}
 	return &c
-}
-func validateOrder(w *World, o Order) error {
-	switch o.Type {
-	case OrderConstruct:
-		p := w.Planets[o.Actor]
-		if p == nil || p.OwnerID != o.EmpireID || p.Construction != nil {
-			return fmt.Errorf("planet unavailable")
-		}
-		base, ok := BuildingBase[o.Target]
-		if !ok {
-			return fmt.Errorf("building")
-		}
-		cost := scale(base, buildingLevel(p.Buildings, o.Target)+1)
-		if !p.Resources.Enough(cost) {
-			return fmt.Errorf("resources")
-		}
-	case OrderResearch:
-		e := w.Empires[o.EmpireID]
-		if e.Research != nil {
-			return fmt.Errorf("research busy")
-		}
-		base, ok := TechBase[o.Target]
-		if !ok {
-			return fmt.Errorf("tech")
-		}
-		p := w.Planets[o.Actor]
-		if p == nil || p.OwnerID != o.EmpireID {
-			return fmt.Errorf("payer")
-		}
-		if !p.Resources.Enough(scale(base, techLevel(e.Tech, o.Target)+1)) {
-			return fmt.Errorf("resources")
-		}
-	case OrderBuildShips:
-		p := w.Planets[o.Actor]
-		if p == nil || p.OwnerID != o.EmpireID || p.ShipyardQueue != nil {
-			return fmt.Errorf("shipyard")
-		}
-		n := intParam(o, "quantity", 1)
-		cost, err := shipCost(o.Target, n)
-		if err != nil || !p.Resources.Enough(cost) {
-			return fmt.Errorf("ships")
-		}
-		if o.Target == ShipColonyArk && w.Empires[o.EmpireID].Tech.Colonization < 1 {
-			return fmt.Errorf("colonization")
-		}
-	case OrderFormFleet:
-		p := w.Planets[o.Actor]
-		if p == nil || p.OwnerID != o.EmpireID {
-			return fmt.Errorf("planet")
-		}
-		ships := shipMapParam(o)
-		if len(ships) == 0 {
-			return fmt.Errorf("no ships")
-		}
-		for k, n := range ships {
-			if _, ok := ShipSpecs[k]; !ok || n < 1 || p.Ships[k] < n {
-				return fmt.Errorf("ships")
-			}
-		}
-	case OrderMove, OrderAttack, OrderSpy, OrderTransport, OrderRecycle, OrderColonize:
-		f := w.Fleets[o.Actor]
-		if f == nil || f.OwnerID != o.EmpireID || len(f.Route) > 0 {
-			return fmt.Errorf("fleet")
-		}
-	case OrderMessage:
-		if w.Empires[o.Target] == nil {
-			return fmt.Errorf("recipient")
-		}
-	default:
-		return fmt.Errorf("unsupported")
-	}
-	return nil
-}
-func applyOrder(w *World, o Order) error {
-	switch o.Type {
-	case OrderConstruct:
-		p := w.Planets[o.Actor]
-		cost := scale(BuildingBase[o.Target], buildingLevel(p.Buildings, o.Target)+1)
-		p.Resources = p.Resources.Sub(cost)
-		p.Construction = &Queue{Kind: o.Target, Level: buildingLevel(p.Buildings, o.Target) + 1, Required: work(cost), Paid: cost}
-	case OrderResearch:
-		e := w.Empires[o.EmpireID]
-		p := w.Planets[o.Actor]
-		cost := scale(TechBase[o.Target], techLevel(e.Tech, o.Target)+1)
-		p.Resources = p.Resources.Sub(cost)
-		e.Research = &Queue{Kind: o.Target, Level: techLevel(e.Tech, o.Target) + 1, Required: work(cost), Paid: cost}
-	case OrderBuildShips:
-		p := w.Planets[o.Actor]
-		n := intParam(o, "quantity", 1)
-		cost, _ := shipCost(o.Target, n)
-		p.Resources = p.Resources.Sub(cost)
-		p.ShipyardQueue = &Queue{Kind: o.Target, Quantity: n, Required: work(cost), Paid: cost}
-	case OrderFormFleet:
-		p := w.Planets[o.Actor]
-		ships := shipMapParam(o)
-		if !takeShips(p.Ships, ships) {
-			return fmt.Errorf("ships unavailable")
-		}
-		id := fmt.Sprintf("f%06d", w.NextFleet)
-		w.NextFleet++
-		w.Fleets[id] = &Fleet{ID: id, OwnerID: o.EmpireID, SystemID: p.SystemID, Ships: ships}
-	case OrderMove, OrderAttack, OrderSpy, OrderTransport, OrderRecycle, OrderColonize:
-		return launch(w, o)
-	case OrderMessage:
-		w.Messages = append(w.Messages, Message{Turn: w.Turn + 1, From: o.EmpireID, To: o.Target, Body: stringParam(o, "body"), Major: boolParam(o, "major")})
-	}
-	return nil
-}
-
-// launch starts a fleet mission. Fuel is paid at departure (spec/game.md,
-// Fleets and movement) by the empire's own planet in the fleet's system when
-// that planet can cover fuel and any cargo; otherwise by deuterium the fleet
-// already carries as cargo (spec/decisions.md D29, D49), so a fleet stranded
-// away from its planets can still leave. Cargo itself is always loaded from
-// the planet.
-func launch(w *World, o Order) error {
-	f := w.Fleets[o.Actor]
-	targetSystem := o.Target
-	if p := w.Planets[o.Target]; p != nil {
-		targetSystem = p.SystemID
-	}
-	route := shortest(w, f.SystemID, targetSystem)
-	if len(route) < 2 && f.SystemID != targetSystem {
-		return fmt.Errorf("route")
-	}
-	fuel := routeFuel(f.Ships, len(route)-1, w.Empires[o.EmpireID].Tech.Propulsion)
-	source := ownedPlanetAt(w, o.EmpireID, f.SystemID)
-	// every check happens before any mutation so a rejected launch has no side effects.
-	var cargo Resources
-	if o.Type == OrderTransport {
-		cargo = resourceParam(o)
-		room := cargoCapacity(f.Ships) - (f.Cargo.Metal + f.Cargo.Crystal + f.Cargo.Deuterium)
-		if cargo.Metal < 0 || cargo.Crystal < 0 || cargo.Deuterium < 0 || cargo.Metal > room || cargo.Crystal > room || cargo.Deuterium > room || cargo.Metal+cargo.Crystal+cargo.Deuterium > room {
-			return fmt.Errorf("cargo")
-		}
-	}
-	fromPlanet := cargo
-	fromPlanet.Deuterium += fuel
-	fromCargo := 0
-	if source == nil || !source.Resources.Enough(fromPlanet) {
-		if f.Cargo.Deuterium < fuel {
-			return fmt.Errorf("fuel")
-		}
-		fromPlanet, fromCargo = cargo, fuel
-	}
-	if fromPlanet != (Resources{}) { // a free launch (e.g. colonizing in place) needs no paying planet
-		if source == nil || !source.Resources.Enough(fromPlanet) {
-			return fmt.Errorf("cargo source")
-		}
-		source.Resources = source.Resources.Sub(fromPlanet)
-	}
-	f.Cargo.Deuterium -= fromCargo
-	f.Cargo = f.Cargo.Add(cargo)
-	f.Route = route
-	f.RouteIndex = 0
-	f.Mission = o.Type
-	f.Target = o.Target
-	return nil
 }
 
 // routeFuel is the deuterium a fleet pays to cross edges route edges:
@@ -325,6 +235,7 @@ func advanceFleets(w *World) {
 }
 func resolveArrivals(w *World) {
 	captured := map[string]bool{}
+	var recyclers []*Fleet
 	for _, id := range fleetIDs(w) {
 		f := w.Fleets[id]
 		if len(f.Route) == 0 || f.RouteIndex != len(f.Route)-1 {
@@ -338,28 +249,94 @@ func resolveArrivals(w *World) {
 		f.Route = nil
 		f.RouteIndex = 0
 		f.Mission = ""
+		if f.Ships.Count() == 0 { // destroyed by an earlier battle this turn
+			continue
+		}
 		switch mission {
+		case OrderMove:
+			w.emit(Event{Type: "fleet_arrived", EmpireID: f.OwnerID, Target: f.ID, Detail: "at " + f.SystemID})
 		case OrderTransport:
-			if p := w.Planets[f.Target]; p != nil && p.OwnerID == f.OwnerID {
-				p.Resources = p.Resources.Add(f.Cargo)
-				f.Cargo = Resources{}
+			if w.Planets[f.Target] != nil {
+				deliver(w, f)
+			} else if t := w.Fleets[f.Target]; t != nil {
+				deliverToFleet(w, f, t)
+			} else {
+				w.emit(Event{Type: "fleet_arrived", EmpireID: f.OwnerID, Target: f.ID, Detail: "at " + f.SystemID + " with cargo"})
 			}
 		case OrderColonize:
 			colonize(w, f)
 		case OrderAttack:
-			if f.Ships.Count() > 0 { // an earlier battle this turn may already have destroyed it
+			if t := w.Fleets[f.Target]; t != nil {
+				fleetCombat(w, f, t, prev)
+			} else if w.Planets[f.Target] != nil {
 				combat(w, f, prev, captured)
+			} else {
+				w.emit(Event{Type: "attack_target_lost", EmpireID: f.OwnerID, Target: f.Target, Detail: f.ID + " found nothing to attack"})
 			}
 		case OrderSpy:
 			spy(w, f)
 		case OrderRecycle:
-			recycle(w, f)
+			recyclers = append(recyclers, f)
 		}
 	}
+	recycle(w, recyclers)
 	pruneEmptyFleets(w)
 }
+
+// deliver unloads a transport at its target planet. Cargo is physical: it goes
+// to whoever owns the planet on arrival, which may be another empire (trade or
+// aid, spec/game.md "Resource transfer and trade", D22). Nothing is unloaded on
+// an unowned planet.
+func deliver(w *World, f *Fleet) {
+	p := w.Planets[f.Target]
+	if p == nil || p.OwnerID == "" || p.SystemID != f.SystemID {
+		w.emit(Event{Type: "transport_failed", EmpireID: f.OwnerID, Target: f.Target, Detail: f.ID + " found no recipient"})
+		return
+	}
+	c := f.Cargo
+	p.Resources = p.Resources.Add(c)
+	f.Cargo = Resources{}
+	amount := c.Metal + c.Crystal + c.Deuterium
+	detail := fmt.Sprintf("metal=%d crystal=%d deuterium=%d", c.Metal, c.Crystal, c.Deuterium)
+	if p.OwnerID == f.OwnerID {
+		w.emit(Event{Type: "cargo_delivered", EmpireID: f.OwnerID, Target: p.ID, Detail: detail})
+		return
+	}
+	w.Empires[f.OwnerID].Stats.ResourcesSent += amount
+	w.Empires[p.OwnerID].Stats.ResourcesReceived += amount
+	w.emit(Event{Type: "transfer", EmpireID: f.OwnerID, Target: p.ID, Other: p.OwnerID, Detail: detail})
+}
+
+// deliverToFleet hands cargo to another fleet in the same system, up to the
+// receiver's free cargo room; what does not fit stays aboard (D62).
+func deliverToFleet(w *World, f, t *Fleet) {
+	if t.SystemID != f.SystemID || t.Ships.Count() == 0 {
+		w.emit(Event{Type: "transport_failed", EmpireID: f.OwnerID, Target: t.ID, Detail: f.ID + " did not find the fleet"})
+		return
+	}
+	room := cargoCapacity(t.Ships) - (t.Cargo.Metal + t.Cargo.Crystal + t.Cargo.Deuterium)
+	var c Resources
+	c.Deuterium = min(max(0, room), f.Cargo.Deuterium) // fuel first: it is what keeps a fleet alive
+	room -= c.Deuterium
+	c.Metal = min(max(0, room), f.Cargo.Metal)
+	room -= c.Metal
+	c.Crystal = min(max(0, room), f.Cargo.Crystal)
+	f.Cargo = f.Cargo.Sub(c)
+	t.Cargo = t.Cargo.Add(c)
+	detail := fmt.Sprintf("metal=%d crystal=%d deuterium=%d", c.Metal, c.Crystal, c.Deuterium)
+	if t.OwnerID == f.OwnerID {
+		w.emit(Event{Type: "cargo_delivered", EmpireID: f.OwnerID, Target: t.ID, Detail: detail})
+		return
+	}
+	amount := c.Metal + c.Crystal + c.Deuterium
+	w.Empires[f.OwnerID].Stats.ResourcesSent += amount
+	w.Empires[t.OwnerID].Stats.ResourcesReceived += amount
+	w.emit(Event{Type: "transfer", EmpireID: f.OwnerID, Target: t.ID, Other: t.OwnerID, Detail: detail})
+}
+
 func progressQueues(w *World) {
-	for _, p := range w.Planets {
+	for _, id := range sortedKeys(w.Planets) {
+		p := w.Planets[id]
 		if p.OwnerID == "" {
 			continue
 		}
@@ -368,6 +345,7 @@ func progressQueues(w *World) {
 			if q.Progress >= q.Required {
 				incBuilding(&p.Buildings, q.Kind)
 				p.Construction = nil
+				w.emit(Event{Type: "construction_complete", EmpireID: p.OwnerID, Target: p.ID, Detail: fmt.Sprintf("%s L%d", q.Kind, q.Level)})
 			}
 		}
 		if q := p.ShipyardQueue; q != nil {
@@ -375,42 +353,69 @@ func progressQueues(w *World) {
 			if q.Progress >= q.Required {
 				p.Ships[q.Kind] += q.Quantity
 				p.ShipyardQueue = nil
+				w.Empires[p.OwnerID].Stats.ShipsBuilt += q.Quantity
+				w.emit(Event{Type: "ships_built", EmpireID: p.OwnerID, Target: p.ID, Detail: fmt.Sprintf("%d %s", q.Quantity, q.Kind)})
 			}
 		}
 	}
-	for _, e := range w.Empires {
+	for _, id := range sortedKeys(w.Empires) {
+		e := w.Empires[id]
 		if e.Research == nil {
 			continue
 		}
-		pts := 0
+		pts, owned := 0, 0
 		for _, p := range w.Planets {
 			if p.OwnerID == e.ID {
 				pts += p.Buildings.ResearchLab
+				owned++
 			}
+		}
+		if owned == 0 { // research needs a planet; a planetless empire's queue waits
+			continue
 		}
 		e.Research.Progress += max(1, pts)
 		if e.Research.Progress >= e.Research.Required {
 			incTech(&e.Tech, e.Research.Kind)
+			w.emit(Event{Type: "research_complete", EmpireID: e.ID, Detail: fmt.Sprintf("%s L%d", e.Research.Kind, e.Research.Level)})
 			e.Research = nil
 		}
 	}
 }
+
+// produce pays every owned planet its yield and records one production
+// event per empire.
 func produce(w *World) {
-	for _, p := range w.Planets {
+	total := map[string]Resources{}
+	for _, id := range sortedKeys(w.Planets) {
+		p := w.Planets[id]
 		if p.OwnerID == "" {
 			continue
 		}
-		e := w.Empires[p.OwnerID]
-		mul := 100 + 10*e.Tech.Industry
-		p.Resources.Metal += 30 * p.Buildings.MetalMine * mul / 100
-		p.Resources.Crystal += 20 * p.Buildings.CrystalMine * mul / 100
-		p.Resources.Deuterium += 12 * p.Buildings.DeuteriumExtractor * mul / 100
+		pr := Production(w, p)
+		p.Resources = p.Resources.Add(pr)
+		total[p.OwnerID] = total[p.OwnerID].Add(pr)
+	}
+	for _, id := range sortedKeys(total) {
+		t := total[id]
+		w.emit(Event{Type: "production", EmpireID: id, Detail: fmt.Sprintf("metal=%d crystal=%d deuterium=%d", t.Metal, t.Crystal, t.Deuterium)})
 	}
 }
+
+// Production is what an owned planet yields per turn (spec/game.md, Economy).
+func Production(w *World, p *Planet) Resources {
+	e := w.Empires[p.OwnerID]
+	if e == nil {
+		return Resources{}
+	}
+	mul := 100 + 10*e.Tech.Industry
+	return Resources{30 * p.Buildings.MetalMine * mul / 100, 20 * p.Buildings.CrystalMine * mul / 100, 12 * p.Buildings.DeuteriumExtractor * mul / 100}
+}
+
 func colonize(w *World, f *Fleet) {
 	p := w.Planets[f.Target]
 	e := w.Empires[f.OwnerID]
 	if p == nil || p.OwnerID != "" || f.Ships[ShipColonyArk] < 1 || planetCount(w, e.ID) >= 1+e.Tech.Colonization {
+		w.emit(Event{Type: "colonize_failed", EmpireID: f.OwnerID, Target: f.Target, Detail: f.ID})
 		return
 	}
 	f.Ships[ShipColonyArk]--
@@ -423,66 +428,94 @@ func colonize(w *World, f *Fleet) {
 		p.Resources = p.Resources.Add(f.Cargo)
 		f.Cargo = Resources{}
 	}
-	w.Events = append(w.Events, Event{Turn: w.Turn, Type: "colonized", EmpireID: e.ID, Target: p.ID})
+	e.Stats.Colonies++
+	w.emit(Event{Type: "colonized", EmpireID: e.ID, Target: p.ID})
 }
-func spy(w *World, f *Fleet) {
-	p := w.Planets[f.Target]
-	if p == nil {
-		return
+
+// recycle resolves every recycle mission that ended this turn. Recyclers in
+// the same system share its debris in proportion to their capacity, the
+// remainder going one unit at a time in a seeded order (spec/game.md, Debris
+// and recycling). Capacity is recycler cargo, bounded by free cargo room.
+func recycle(w *World, fleets []*Fleet) {
+	bySystem := map[string][]*Fleet{}
+	for _, f := range fleets {
+		bySystem[f.SystemID] = append(bySystem[f.SystemID], f)
 	}
-	delta := w.Empires[f.OwnerID].Tech.Sensors
-	if p.OwnerID != "" {
-		delta -= w.Empires[p.OwnerID].Tech.Sensors
+	for _, sid := range sortedKeys(bySystem) {
+		s := w.Systems[sid]
+		fs := bySystem[sid]
+		caps := make([]int, len(fs))
+		total := 0
+		for i, f := range fs {
+			load := f.Cargo.Metal + f.Cargo.Crystal + f.Cargo.Deuterium
+			caps[i] = max(0, min(f.Ships[ShipRecycler]*ShipSpecs[ShipRecycler].Cargo, cargoCapacity(f.Ships)-load))
+			total += caps[i]
+		}
+		debris := s.Debris.Metal + s.Debris.Crystal
+		share := append([]int(nil), caps...)
+		if total > debris {
+			given := 0
+			for i := range share {
+				share[i] = debris * caps[i] / total
+				given += share[i]
+			}
+			order := seededOrder(w, "recycle|"+sid, len(fs))
+			for k := 0; given < debris; k = (k + 1) % len(order) {
+				if i := order[k]; share[i] < caps[i] {
+					share[i]++
+					given++
+				}
+			}
+		}
+		for _, i := range seededOrder(w, "recycle-take|"+sid, len(fs)) {
+			f := fs[i]
+			m := min(share[i], s.Debris.Metal)
+			c := min(share[i]-m, s.Debris.Crystal)
+			s.Debris.Metal -= m
+			s.Debris.Crystal -= c
+			f.Cargo.Metal += m
+			f.Cargo.Crystal += c
+			w.Empires[f.OwnerID].Stats.DebrisCollected += m + c
+			w.emit(Event{Type: "debris_collected", EmpireID: f.OwnerID, Target: sid, Detail: fmt.Sprintf("%s metal=%d crystal=%d", f.ID, m, c)})
+		}
 	}
-	tier := 0
-	if delta >= -1 {
-		tier = 1
-	}
-	if delta >= 1 {
-		tier = 2
-	}
-	if delta >= 3 {
-		tier = 3
-	}
-	w.Events = append(w.Events, Event{Turn: w.Turn, Type: "espionage", EmpireID: f.OwnerID, Target: p.ID, Detail: fmt.Sprintf("tier=%d owner=%s", tier, p.OwnerID)})
-}
-func recycle(w *World, f *Fleet) {
-	s := w.Systems[f.SystemID]
-	cap := 0
-	for k, n := range f.Ships {
-		cap += ShipSpecs[k].Cargo * n
-	}
-	take := min(cap, s.Debris.Metal+s.Debris.Crystal)
-	m := min(take, s.Debris.Metal)
-	f.Cargo.Metal += m
-	s.Debris.Metal -= m
-	take -= m
-	c := min(take, s.Debris.Crystal)
-	f.Cargo.Crystal += c
-	s.Debris.Crystal -= c
 }
 
 // updateSovereignty applies spec/game.md "Elimination and government in
 // exile" and D29: a planetless empire survives only with a viable Colony Ark,
 // i.e. one already committed to a paid route, or an idle one that can pay
 // (from carried deuterium) the fuel to reach some unowned planet it could
-// colonize.
+// colonize. Transitions are events; an eliminated empire leaves its alliance.
 func updateSovereignty(w *World) {
-	for _, e := range w.Empires {
+	for _, id := range sortedKeys(w.Empires) {
+		e := w.Empires[id]
+		wasExile, wasEliminated := e.Exile, e.Eliminated
 		if planetCount(w, e.ID) > 0 {
 			e.Exile = false
 			e.Eliminated = false
-			continue
-		}
-		viable := false
-		for _, id := range fleetIDs(w) {
-			if f := w.Fleets[id]; f.OwnerID == e.ID && f.Ships[ShipColonyArk] > 0 && viableArk(w, f) {
-				viable = true
-				break
+		} else {
+			viable := false
+			for _, fid := range fleetIDs(w) {
+				if f := w.Fleets[fid]; f.OwnerID == e.ID && f.Ships[ShipColonyArk] > 0 && viableArk(w, f) {
+					viable = true
+					break
+				}
 			}
+			e.Exile = viable
+			e.Eliminated = !viable
 		}
-		e.Exile = viable
-		e.Eliminated = !viable
+		switch {
+		case e.Eliminated && !wasEliminated:
+			e.Stats.EliminatedTurn = w.Turn + 1 // the first turn the empire is gone
+			w.emit(Event{Type: "eliminated", EmpireID: e.ID})
+			if e.AllianceID != "" {
+				leaveAlliance(w, e, "eliminated")
+			}
+		case e.Exile && !wasExile:
+			w.emit(Event{Type: "exiled", EmpireID: e.ID})
+		case wasExile && !e.Exile && !e.Eliminated:
+			w.emit(Event{Type: "restored", EmpireID: e.ID})
+		}
 	}
 }
 

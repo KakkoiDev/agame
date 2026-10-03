@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -185,4 +186,65 @@ func TestOpenAIRequestCarriesPrompt(t *testing.T) {
 	if _, err := (OpenAICompatible{Endpoint: srv.URL, Model: "m"}).Decide(context.Background(), o); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestOpenAIMalformedOutputKeepsRawAndRepairFeedsProblemBack(t *testing.T) {
+	o := Observe(genWorld(t, 1), "e00")
+	bad := chatServer(t, 200, "I will build mines.", func(_ *http.Request, body map[string]any) {
+		if body["max_tokens"] != float64(DefaultMaxTokens) {
+			t.Errorf("max_tokens %v", body["max_tokens"])
+		}
+	})
+	defer bad.Close()
+	d, err := OpenAICompatible{Endpoint: bad.URL}.Decide(context.Background(), o)
+	var me *MalformedError
+	if !errors.As(err, &me) || me.Raw != "I will build mines." || d.Raw != "I will build mines." {
+		t.Fatalf("d=%+v err=%v", d, err)
+	}
+	fixed := chatServer(t, 200, `{"orders":[],"statement":"fixed"}`, func(_ *http.Request, body map[string]any) {
+		msgs, _ := body["messages"].([]any)
+		if len(msgs) != 4 || body["max_tokens"] != float64(77) {
+			t.Errorf("repair request %v", body)
+			return
+		}
+		prev, _ := msgs[2].(map[string]any)
+		again, _ := msgs[3].(map[string]any)
+		if prev["role"] != "assistant" || prev["content"] != "I will build mines." || !strings.Contains(again["content"].(string), "no JSON here") {
+			t.Errorf("repair conversation %v", msgs)
+		}
+	})
+	defer fixed.Close()
+	d, err = OpenAICompatible{Endpoint: fixed.URL, MaxTokens: 77, Model: "m"}.Repair(context.Background(), o, d, "no JSON here")
+	if err != nil || d.Statement != "fixed" || d.Raw == "" {
+		t.Fatalf("d=%+v err=%v", d, err)
+	}
+	if (OpenAICompatible{Model: "m"}).Name() != "openai-compatible:m" || (AutopilotAgent{}).Name() != "autopilot" {
+		t.Fatal("agent names")
+	}
+	if PromptHash(o) != PromptHash(Observe(genWorld(t, 1), "e00")) || PromptHash(o) == PromptHash(Observe(genWorld(t, 1), "e01")) {
+		t.Fatal("prompt hash")
+	}
+}
+
+func TestOpenAIReflectAndConfig(t *testing.T) {
+	o := Observe(genWorld(t, 1), "e00")
+	srv := chatServer(t, 200, "  Lost the homeworld to e01. Trust them less.  ", func(_ *http.Request, body map[string]any) {
+		msgs, _ := body["messages"].([]any)
+		sys, _ := msgs[0].(map[string]any)["content"].(string)
+		if body["max_tokens"] != float64(ReflectionMaxTokens) || !strings.Contains(sys, "homeworld_captured") || !strings.Contains(sys, "cannot give orders") {
+			t.Errorf("reflection request %v", body)
+		}
+	})
+	defer srv.Close()
+	a := OpenAICompatible{Endpoint: srv.URL, Model: "m"}
+	note, err := a.Reflect(context.Background(), o, []string{"homeworld_captured"})
+	if err != nil || note != "Lost the homeworld to e01. Trust them less." {
+		t.Fatalf("%q %v", note, err)
+	}
+	c := a.Config()
+	if c["model"] != "m" || c["max_tokens"] != DefaultMaxTokens || c["temperature"] != Temperature {
+		t.Fatalf("config %v", c)
+	}
+	var _ Reflector = a
+	var _ Configured = a
 }
