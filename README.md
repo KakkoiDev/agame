@@ -22,6 +22,7 @@ The engine owns truth. Agents choose actions. [Jikko](https://github.com/KakkoiD
 - generic agent interface, deterministic autopilot and OpenAI-compatible local-model adapter
 - Jikko tree/batch-read adapter
 - content-addressed optional generated-media cache
+- browser universe library with universe ZIP export/import
 - observer dashboard and browser PWA showing standings, alliances, hostilities, battles, diplomacy and rejected orders
 
 The normative rules remain under [spec/](spec/vision.md); implementation decisions are recorded in [spec/decisions.md](spec/decisions.md). Browser/local save, Git synchronization, and multi-universe semantics are defined in [spec/storage-and-sync.md](spec/storage-and-sync.md).

@@ -194,6 +194,9 @@ A `transport` may target a fleet, of any empire, to supply it (for instance a go
 ## D63 — Reflection triggers (refines D25)
 After resolving a turn that does not end the run, the engine computes reflection triggers per living empire from that turn's events and S(t+1): its homeworld captured (`homeworld_captured`) or recaptured by it (`homeworld_recovered`); it captured another empire's homeworld (`captured_enemy_homeworld`); it entered exile or was restored; it founded, joined or left an alliance, or was the victim of a treaty breach (`alliance_broken`); it fought a battle this turn and its total ship value (docked and in fleets, at full resource cost) fell to at most half of its S(t) value (`lost_half_fleet`); a message marked major was delivered to it; and every 12th turn (`annual_review`). Triggered rulers whose agent implements reflection are offered it, in empire-ID order, on their observation of S(t+1), within the per-ruler timeout; the reflection returns a concise note and can never submit orders. Every offer, including to agents that cannot reflect, is recorded in `reflections.jsonl`. The run header's roster records each agent's inference configuration (model, temperature, output budgets, prompt version) when the agent can describe it.
 
+## D64 — Universe ZIP format (refines D41)
+A universe ZIP holds the checked-out universe branch's files at the archive root (no Git history, no credentials), stored without compression in sorted path order so the same universe exports to the same bytes. Importing never overwrites: it creates a new universe branch with a fresh id, records the source universe id in `universe.json`, and commits the imported files as one transaction. An archive without an AGame `world.json`, with unsafe paths, compressed entries or bad checksums is refused.
+
 # Status
 
 **There are no unresolved v1 questions from the original pre-implementation list.**
