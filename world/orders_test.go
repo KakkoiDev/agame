@@ -292,3 +292,22 @@ func TestLaunchSourcePlanetIsDeterministic(t *testing.T) {
 		}
 	}
 }
+
+func TestFreeLaunchNeedsNoPayingPlanet(t *testing.T) {
+	// A government in exile (no planets) with a Colony Ark parked next to an
+	// empty planet must be able to colonize in place (spec/game.md, exile):
+	// the zero-edge route costs no fuel, so no paying planet is needed.
+	w := newTestWorld(t, 1)
+	h := home(w, "e01")
+	h.OwnerID = ""
+	sys := w.Systems[h.SystemID]
+	w.Fleets["fark"] = &Fleet{ID: "fark", OwnerID: "e01", SystemID: sys.ID, Ships: Ships{"colony_ark": 1}}
+	w.Empires["e01"].Tech.Colonization = 1
+	r := resolve(t, w, Order{EmpireID: "e01", Type: "colonize", Actor: "fark", Target: sys.Planets[1]})
+	if len(r.Accepted) != 1 || w.Planets[sys.Planets[1]].OwnerID != "e01" {
+		t.Fatalf("exile could not colonize in place: rejected=%v", r.Rejected)
+	}
+	if e := w.Empires["e01"]; e.Exile || e.Eliminated {
+		t.Fatalf("empire not restored: %+v", e)
+	}
+}
