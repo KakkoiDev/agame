@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -151,5 +152,71 @@ func TestCLINewTurnLifecycle(t *testing.T) {
 	}
 	if out, err := cli("bogus"); err == nil || !strings.Contains(out, "usage") {
 		t.Fatalf("bogus command: %v %s", err, out)
+	}
+}
+
+func TestRunReplayAndResult(t *testing.T) {
+	s := run.Store{Dir: filepath.Join(t.TempDir(), "run")}
+	ctx := context.Background()
+	var out strings.Builder
+	if err := command(ctx, s, "new", []string{"9"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	var h run.Header
+	if err := s.LoadJSON(run.HeaderFile, &h); err != nil || h.Ruleset != world.RulesetVersion || h.Seed != 9 || h.InitialHash == "" {
+		t.Fatalf("header %+v %v", h, err)
+	}
+	for _, bad := range [][]string{{}, {"0"}, {"x"}} {
+		if err := command(ctx, s, "run", bad, &out); err == nil {
+			t.Fatalf("run %v accepted", bad)
+		}
+	}
+	t.Setenv("AGAME_TURN_LIMIT", "6")
+	out.Reset()
+	if err := command(ctx, s, "run", []string{"4"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(out.String(), "accepted") != 4 {
+		t.Fatalf("output %s", out.String())
+	}
+	if err := s.LoadJSON(run.HeaderFile, &h); err != nil || len(h.Roster) != 8 || h.Roster[0].Agent != "autopilot" || h.PromptVersion == "" {
+		t.Fatalf("roster %+v", h)
+	}
+	out.Reset()
+	if err := command(ctx, s, "replay", nil, &out); err != nil || !strings.Contains(out.String(), "replayed 4 turns") {
+		t.Fatalf("replay: %v %s", err, out.String())
+	}
+	out.Reset()
+	if err := command(ctx, s, "run", []string{"10"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "run ended at turn 6: turn_limit") || !strings.Contains(out.String(), "1. ") {
+		t.Fatalf("output %s", out.String())
+	}
+	var res Result
+	if err := s.LoadJSON(run.ResultFile, &res); err != nil || res.End.Reason != world.EndTurnLimit || len(res.Standings) != 8 || res.Ops["e00"].Turns != 6 {
+		t.Fatalf("result %+v %v", res, err)
+	}
+	if err := command(ctx, s, "turn", nil, &out); err == nil || !strings.Contains(err.Error(), "already ended") {
+		t.Fatalf("ended run advanced: %v", err)
+	}
+	n, want := 0, 0
+	for _, o := range res.Ops {
+		want += o.Turns
+	}
+	if err := s.ReadJSONL(run.DecisionsFile, func([]byte) error { n++; return nil }); err != nil || n != want || n < 40 {
+		t.Fatalf("decision records %d %v", n, err)
+	}
+	// A world that does not match its log fails the replay.
+	w, _ := s.Load()
+	w.Planets[w.Empires["e00"].HomeworldID].Resources.Metal++
+	if err := s.Save(w); err != nil {
+		t.Fatal(err)
+	}
+	if err := command(ctx, s, "replay", nil, &out); err == nil || !strings.Contains(err.Error(), "but world.json has") {
+		t.Fatalf("tampered world replayed: %v", err)
+	}
+	if err := command(ctx, run.Store{Dir: t.TempDir()}, "replay", nil, &out); err == nil {
+		t.Fatal("replay without a run")
 	}
 }

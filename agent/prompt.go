@@ -1,10 +1,22 @@
 package agent
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
 )
+
+// PromptVersion identifies the harness prompt format; it is recorded with
+// every run (spec/benchmark.md, Reproducible universe).
+const PromptVersion = "agame-prompt-2"
+
+// PromptHash identifies exactly what a model was shown for an observation.
+func PromptHash(o Observation) string {
+	h := sha256.Sum256([]byte(SystemPrompt(o) + "\x00" + Prompt(o)))
+	return hex.EncodeToString(h[:])
+}
 
 const decisionSchema = `Return JSON only: {"orders":[{"type":"...","actor":"...","target":"...","params":{}}],"statement":"..."}. ` +
 	`Choose zero or more legal AGame orders. Use only ids that appear in the observation; never invent ids.`

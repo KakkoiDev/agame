@@ -467,3 +467,13 @@ func TestQueueCompletionEvents(t *testing.T) {
 		t.Fatalf("events %v", kinds)
 	}
 }
+
+func TestPlanetlessEmpireResearchWaits(t *testing.T) {
+	w := newTestWorld(t, 1)
+	w.Empires["e01"].Research = &Queue{Kind: "sensors", Level: 1, Required: 3}
+	home(w, "e01").OwnerID = ""
+	r := resolve(t, w)
+	if w.Empires["e01"].Research.Progress != 0 || len(eventsOfType(r, "research_complete")) != 0 {
+		t.Fatalf("research progressed without planets: %+v", w.Empires["e01"].Research)
+	}
+}

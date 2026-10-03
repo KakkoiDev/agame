@@ -2,21 +2,29 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"html/template"
+	"io"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
+	"time"
 
+	"github.com/KakkoiDev/agame/agent"
+	"github.com/KakkoiDev/agame/engine"
 	"github.com/KakkoiDev/agame/run"
 	"github.com/KakkoiDev/agame/world"
 )
 
 var names = []string{"Cassian", "Malrec", "Aya", "Kael", "Iona", "Talos", "Nara", "Orion"}
+
+const usage = "usage: agame [new [seed] | turn | run N | replay | serve]"
 
 func main() {
 	flag.Parse()
@@ -24,38 +32,199 @@ func main() {
 	if flag.NArg() > 0 {
 		cmd = flag.Arg(0)
 	}
-	dir := env("AGAME_RUN", "run")
-	s := run.Store{Dir: dir}
+	s := run.Store{Dir: env("AGAME_RUN", "run")}
+	if cmd == "serve" {
+		serve(s)
+		return
+	}
+	if err := command(context.Background(), s, cmd, flag.Args()[1:], os.Stdout); err != nil {
+		log.Fatal(err)
+	}
+}
+
+// command runs one CLI command against the run directory.
+func command(ctx context.Context, s run.Store, cmd string, args []string, out io.Writer) error {
 	switch cmd {
 	case "new":
 		seed := int64(1)
-		if flag.NArg() > 1 {
+		if len(args) > 0 {
 			var err error
-			seed, err = strconv.ParseInt(flag.Arg(1), 10, 64)
+			seed, err = strconv.ParseInt(args[0], 10, 64)
 			if err != nil {
-				log.Fatalf("invalid seed %q: %v", flag.Arg(1), err)
+				return fmt.Errorf("invalid seed %q: %v", args[0], err)
 			}
 		}
-		if _, err := os.Stat(filepath.Join(dir, "world.json")); err == nil {
-			log.Fatalf("%s already contains a universe; choose another AGAME_RUN directory (a new game never overwrites an existing one)", dir)
+		if _, err := os.Stat(filepath.Join(s.Dir, run.WorldFile)); err == nil {
+			return fmt.Errorf("%s already contains a universe; choose another AGAME_RUN directory (a new game never overwrites an existing one)", s.Dir)
 		}
 		w, err := world.Generate(seed, names)
-		must(err)
-		must(s.Save(w))
-		fmt.Println(dir)
+		if err != nil {
+			return err
+		}
+		if err := s.Create(w, run.Header{PromptVersion: agent.PromptVersion}); err != nil {
+			return err
+		}
+		fmt.Fprintln(out, s.Dir)
 	case "turn":
-		w, err := s.Load()
-		must(err)
-		res, err := world.ResolveTurn(w, map[string][]world.Order{})
-		must(err)
-		must(s.Append(res.Events))
-		must(s.Save(w))
-		fmt.Println(w.Turn)
-	case "serve":
-		serve(s)
+		w, err := play(ctx, s, 1, io.Discard)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintln(out, w.Turn)
+	case "run":
+		n := 0
+		if len(args) > 0 {
+			var err error
+			if n, err = strconv.Atoi(args[0]); err != nil || n < 1 {
+				return fmt.Errorf("invalid turn count %q", args[0])
+			}
+		}
+		if n == 0 {
+			return fmt.Errorf("usage: agame run N")
+		}
+		_, err := play(ctx, s, n, out)
+		return err
+	case "replay":
+		return replay(s, out)
 	default:
-		log.Fatal("usage: agame [new [seed]|turn|serve]")
+		return fmt.Errorf("%s", usage)
 	}
+	return nil
+}
+
+// rulers picks the decision provider for every ruler: an OpenAI-compatible
+// local model when AGAME_MODEL_ENDPOINT is set, else the deterministic
+// autopilot. Every ruler shares the same provider (D6).
+func rulers(w *world.World) (map[string]agent.Agent, []run.RosterEntry) {
+	var a agent.Agent = agent.AutopilotAgent{}
+	if ep := os.Getenv("AGAME_MODEL_ENDPOINT"); ep != "" {
+		a = agent.OpenAICompatible{Endpoint: ep, APIKey: os.Getenv("AGAME_API_KEY"), Model: env("AGAME_MODEL", "local")}
+	}
+	m := map[string]agent.Agent{}
+	var roster []run.RosterEntry
+	for _, id := range sortedKeys(w.Empires) {
+		m[id] = a
+		roster = append(roster, run.RosterEntry{Empire: id, Name: w.Empires[id].Name, Agent: a.(interface{ Name() string }).Name()})
+	}
+	return m, roster
+}
+
+func budget() engine.Budget {
+	b := engine.CanonicalBudget()
+	if v, err := strconv.Atoi(os.Getenv("AGAME_TURN_LIMIT")); err == nil && v > 0 {
+		b.TurnLimit = v
+	}
+	if v, err := time.ParseDuration(os.Getenv("AGAME_TIMEOUT")); err == nil && v > 0 {
+		b.Timeout = v
+	}
+	return b
+}
+
+// play advances the stored run by up to n turns through engine.Runner, the
+// same code path the browser uses, committing every turn. It stops early when
+// an end condition is reached and then writes the final result.
+func play(ctx context.Context, s run.Store, n int, out io.Writer) (*world.World, error) {
+	w, err := s.Load()
+	if err != nil {
+		return nil, err
+	}
+	agents, roster := rulers(w)
+	r := &engine.Runner{World: w, Agents: agents, Budget: budget()}
+	var h run.Header
+	if err := s.LoadJSON(run.HeaderFile, &h); err == nil {
+		h.Roster, h.Budget, h.PromptVersion = roster, r.Budget, agent.PromptVersion
+		if err := s.SaveJSON(run.HeaderFile, h); err != nil {
+			return w, err
+		}
+	}
+	for i := 0; i < n; i++ {
+		rec, err := r.Step(ctx)
+		if err != nil {
+			return w, err
+		}
+		decisions := make([]any, len(rec.Decisions))
+		for i, d := range rec.Decisions {
+			decisions[i] = d
+		}
+		if err := s.Commit(w, rec.Result, decisions...); err != nil {
+			return w, err
+		}
+		fmt.Fprintf(out, "turn %d: %d accepted, %d rejected, %d events\n", rec.Turn, len(rec.Result.Accepted), len(rec.Result.Rejected), len(rec.Result.Events))
+		if rec.End != nil {
+			res, err := finalResult(s, w, rec.End)
+			if err != nil {
+				return w, err
+			}
+			fmt.Fprintf(out, "run ended at turn %d: %s\n", rec.End.Turn, rec.End.Reason)
+			for _, st := range res.Standings {
+				fmt.Fprintf(out, "%d. %s (%s) %s planets=%d score=%d\n", st.Rank, st.Name, st.Empire, st.Status, st.Planets, st.Score)
+			}
+			break
+		}
+	}
+	return w, nil
+}
+
+// Result is the final record of an ended run.
+type Result struct {
+	End       *world.End            `json:"end"`
+	StateHash string                `json:"state_hash"`
+	Standings []world.Standing      `json:"standings"`
+	Ops       map[string]engine.Ops `json:"agent_operation"`
+}
+
+func finalResult(s run.Store, w *world.World, end *world.End) (Result, error) {
+	res := Result{End: end, StateHash: world.StateHash(w), Standings: world.Standings(w), Ops: map[string]engine.Ops{}}
+	err := s.ReadJSONL(run.DecisionsFile, func(b []byte) error {
+		var d engine.DecisionRecord
+		if err := json.Unmarshal(b, &d); err != nil {
+			return err
+		}
+		o := res.Ops[d.Empire]
+		o.Add(d)
+		res.Ops[d.Empire] = o
+		return nil
+	})
+	if err != nil {
+		return res, err
+	}
+	return res, s.SaveJSON(run.ResultFile, res)
+}
+
+// replay re-resolves the logged run from initial.json and checks that it
+// reproduces every logged turn and the saved world.
+func replay(s run.Store, out io.Writer) error {
+	var initial world.World
+	if err := s.LoadJSON(run.InitialFile, &initial); err != nil {
+		return fmt.Errorf("replay needs %s: %w", run.InitialFile, err)
+	}
+	turns, err := s.Turns()
+	if err != nil {
+		return err
+	}
+	final, err := engine.Replay(&initial, turns)
+	if err != nil {
+		return err
+	}
+	saved, err := s.Load()
+	if err != nil {
+		return err
+	}
+	got, want := world.StateHash(final), world.StateHash(saved)
+	if got != want {
+		return fmt.Errorf("replayed %d turns to state %s, but %s has %s", len(turns), got, run.WorldFile, want)
+	}
+	fmt.Fprintf(out, "replayed %d turns; final state %s matches %s\n", len(turns), got, run.WorldFile)
+	return nil
+}
+
+func sortedKeys[V any](m map[string]V) []string {
+	ks := make([]string, 0, len(m))
+	for k := range m {
+		ks = append(ks, k)
+	}
+	sort.Strings(ks)
+	return ks
 }
 
 type row struct {
@@ -132,9 +301,4 @@ func env(k, d string) string {
 		return v
 	}
 	return d
-}
-func must(err error) {
-	if err != nil {
-		log.Fatal(err)
-	}
 }

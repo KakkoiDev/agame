@@ -96,25 +96,12 @@ func TestRunnerAgentsShareOneSnapshot(t *testing.T) {
 	}
 }
 
-func autopilotAgents(get func() *world.World) map[string]agent.Agent {
-	m := map[string]agent.Agent{}
-	for _, id := range []string{"e00", "e01", "e02", "e03", "e04", "e05", "e06", "e07"} {
-		id := id
-		m[id] = agentFunc(func(context.Context, agent.Observation) (agent.Decision, error) {
-			return agent.Autopilot(get(), id), nil
-		})
-	}
-	return m
-}
-
 func TestLongRunIsReproducibleAcrossJSONRoundTrips(t *testing.T) {
 	// The browser serialises the world to JSON between every turn; resolving
 	// from a round-tripped world must give exactly the same history.
 	const turns = 80
-	direct := &Runner{World: newWorld(t, 77)}
-	direct.Agents = autopilotAgents(func() *world.World { return direct.World })
-	trip := &Runner{World: newWorld(t, 77)}
-	trip.Agents = autopilotAgents(func() *world.World { return trip.World })
+	direct := &Runner{World: newWorld(t, 77), Agents: observationAutopilots()}
+	trip := &Runner{World: newWorld(t, 77), Agents: observationAutopilots()}
 	for i := 0; i < turns; i++ {
 		ra, err := direct.Turn(context.Background())
 		if err != nil {
@@ -148,8 +135,7 @@ func TestLongRunIsReproducibleAcrossJSONRoundTrips(t *testing.T) {
 
 func TestLongRunInvariants(t *testing.T) {
 	for _, seed := range []int64{1, 2, 3} {
-		r := &Runner{World: newWorld(t, seed)}
-		r.Agents = autopilotAgents(func() *world.World { return r.World })
+		r := &Runner{World: newWorld(t, seed), Agents: observationAutopilots()}
 		for i := 0; i < 120; i++ {
 			if _, err := r.Turn(context.Background()); err != nil {
 				t.Fatal(err)
@@ -182,33 +168,42 @@ func TestLongRunInvariants(t *testing.T) {
 	}
 }
 
-// runAutopilot plays a fresh fixed-seed autopilot game and returns every turn
-// result plus the final world, all as JSON.
-func runAutopilot(t *testing.T, seed int64, turns int) ([]string, string, map[string]int) {
+// runAutopilot plays a fresh fixed-seed autopilot game through the Runner
+// and returns every turn result plus the final world, all as JSON, and the
+// turn log.
+func runAutopilot(t *testing.T, seed int64, turns int) ([]string, string, map[string]int, []world.TurnResult) {
 	t.Helper()
-	r := &Runner{World: newWorld(t, seed)}
-	r.Agents = autopilotAgents(func() *world.World { return r.World })
+	r := &Runner{World: newWorld(t, seed), Agents: observationAutopilots(), Budget: CanonicalBudget()}
 	var results []string
+	var log []world.TurnResult
 	kinds := map[string]int{}
 	for i := 0; i < turns; i++ {
-		res, err := r.Turn(context.Background())
+		rec, err := r.Step(context.Background())
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, e := range res.Events {
+		for _, e := range rec.Result.Events {
 			kinds[e.Type]++
 		}
-		b, _ := json.Marshal(res)
+		b, _ := json.Marshal(rec.Result)
 		results = append(results, string(b))
+		var tr world.TurnResult
+		if err := json.Unmarshal(b, &tr); err != nil {
+			t.Fatal(err)
+		}
+		log = append(log, tr)
+		if rec.End != nil {
+			t.Fatalf("run ended at turn %d: %+v", i, rec.End)
+		}
 	}
 	b, _ := json.Marshal(r.World)
-	return results, string(b), kinds
+	return results, string(b), kinds, log
 }
 
 func TestHundredTurnAutopilotGameIsIdenticalAcrossRuns(t *testing.T) {
 	const turns = 100
-	ra, wa, kinds := runAutopilot(t, 2026, turns)
-	rb, wb, _ := runAutopilot(t, 2026, turns)
+	ra, wa, kinds, log := runAutopilot(t, 2026, turns)
+	rb, wb, _, _ := runAutopilot(t, 2026, turns)
 	for i := range ra {
 		if ra[i] != rb[i] {
 			t.Fatalf("turn %d diverged:\n%s\n%s", i, ra[i], rb[i])
@@ -217,8 +212,18 @@ func TestHundredTurnAutopilotGameIsIdenticalAcrossRuns(t *testing.T) {
 	if wa != wb {
 		t.Fatal("final worlds diverged")
 	}
-	if kinds["battle"] == 0 {
-		t.Fatalf("no battle in %d turns; the test no longer exercises combat: %v", turns, kinds)
+	for _, k := range []string{"battle", "alliance_created", "alliance_joined", "message_sent", "ships_built", "research_complete"} {
+		if kinds[k] == 0 {
+			t.Fatalf("no %s in %d turns; the test no longer exercises it: %v", k, turns, kinds)
+		}
+	}
+	// The run replays from S(0) and its turn log alone.
+	final, err := Replay(newWorld(t, 2026), log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := json.Marshal(final); string(b) != wa {
+		t.Fatal("replayed world differs from the played world")
 	}
 	t.Logf("event counts over %d turns: %v", turns, kinds)
 }

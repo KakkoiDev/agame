@@ -51,15 +51,7 @@ type RulerView struct {
 }
 
 // Status names an empire's sovereignty state.
-func Status(e *world.Empire) string {
-	switch {
-	case e.Eliminated:
-		return "eliminated"
-	case e.Exile:
-		return "exile"
-	}
-	return "sovereign"
-}
+func Status(e *world.Empire) string { return world.EmpireStatus(e) }
 
 // AllianceView is the public part of an alliance: who belongs to it.
 // Pending invitations are shown only to the alliance's members.
@@ -101,10 +93,29 @@ func SizeBand(n int) string { return world.SizeBand(n) }
 type Decision struct {
 	Orders    []world.Order `json:"orders"`
 	Statement string        `json:"statement"`
+	// Raw is the model's unparsed output, kept for the decision record.
+	Raw string `json:"-"`
 }
 type Agent interface {
 	Decide(context.Context, Observation) (Decision, error)
 }
+
+// Repairer is an Agent that can be asked to correct an invalid decision
+// (spec/agents.md, Failure handling): prev is its last attempt (with Raw
+// output when it had one) and problem says what was wrong.
+type Repairer interface {
+	Repair(ctx context.Context, o Observation, prev Decision, problem string) (Decision, error)
+}
+
+// MalformedError is returned when model output is not a decision envelope.
+// Raw is the output, so it can be recorded and fed back for repair.
+type MalformedError struct {
+	Raw string
+	Err error
+}
+
+func (e *MalformedError) Error() string { return "malformed decision: " + e.Err.Error() }
+func (e *MalformedError) Unwrap() error { return e.Err }
 
 // Observe returns a deep copy sorted by ID: agents run sequentially, so they
 // must neither see map-order noise nor be able to mutate the frozen S(t).

@@ -93,3 +93,6 @@ func contains(xs []string, x string) bool {
 	}
 	return false
 }
+
+// Name identifies the agent in run records.
+func (AutopilotAgent) Name() string { return "autopilot" }

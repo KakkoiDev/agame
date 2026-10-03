@@ -13,13 +13,48 @@ import (
 type OpenAICompatible struct {
 	Endpoint, APIKey, Model string
 	Client                  *http.Client
+	// MaxTokens caps the decision output; 0 means the canonical 2,000
+	// (spec/agents.md, Small-model budgets).
+	MaxTokens int
 }
 
+// DefaultMaxTokens is the canonical final-decision output budget.
+const DefaultMaxTokens = 2000
+
 func (a OpenAICompatible) Decide(ctx context.Context, o Observation) (Decision, error) {
-	body := map[string]any{"model": a.Model, "temperature": 0.3, "messages": []map[string]string{
+	return a.complete(ctx, []map[string]string{
 		{"role": "system", "content": SystemPrompt(o)},
 		{"role": "user", "content": Prompt(o)},
-	}}
+	})
+}
+
+// Repair re-asks the model with its previous answer and the problem found,
+// keeping the original system prompt and observation.
+func (a OpenAICompatible) Repair(ctx context.Context, o Observation, prev Decision, problem string) (Decision, error) {
+	raw := prev.Raw
+	if raw == "" {
+		b, _ := json.Marshal(prev)
+		raw = string(b)
+	}
+	return a.complete(ctx, []map[string]string{
+		{"role": "system", "content": SystemPrompt(o)},
+		{"role": "user", "content": Prompt(o)},
+		{"role": "assistant", "content": raw},
+		{"role": "user", "content": RepairPrompt(problem)},
+	})
+}
+
+// RepairPrompt is the message that feeds a validation problem back.
+func RepairPrompt(problem string) string {
+	return "Your previous answer could not be used: " + problem + "\nReply again with the corrected JSON decision only."
+}
+
+func (a OpenAICompatible) complete(ctx context.Context, messages []map[string]string) (Decision, error) {
+	maxTokens := a.MaxTokens
+	if maxTokens <= 0 {
+		maxTokens = DefaultMaxTokens
+	}
+	body := map[string]any{"model": a.Model, "temperature": 0.3, "max_tokens": maxTokens, "messages": messages}
 	b, err := json.Marshal(body)
 	if err != nil {
 		return Decision{}, err
@@ -55,7 +90,13 @@ func (a OpenAICompatible) Decide(ctx context.Context, o Observation) (Decision, 
 	if err = json.NewDecoder(io.LimitReader(resp.Body, maxModelResponse)).Decode(&out); err != nil || len(out.Choices) == 0 {
 		return Decision{}, fmt.Errorf("invalid model response")
 	}
-	return ParseDecision(out.Choices[0].Message.Content)
+	content := out.Choices[0].Message.Content
+	d, err := ParseDecision(content)
+	if err != nil {
+		return Decision{Raw: content}, &MalformedError{Raw: content, Err: err}
+	}
+	d.Raw = content
+	return d, nil
 }
 
 const maxModelResponse = 8 << 20
@@ -75,3 +116,6 @@ func ParseDecision(content string) (Decision, error) {
 	}
 	return Decision{}, fmt.Errorf("model output is not a decision JSON object")
 }
+
+// Name identifies the agent and model in run records.
+func (a OpenAICompatible) Name() string { return "openai-compatible:" + a.Model }

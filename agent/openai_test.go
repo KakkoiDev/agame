@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -184,5 +185,43 @@ func TestOpenAIRequestCarriesPrompt(t *testing.T) {
 	defer srv.Close()
 	if _, err := (OpenAICompatible{Endpoint: srv.URL, Model: "m"}).Decide(context.Background(), o); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestOpenAIMalformedOutputKeepsRawAndRepairFeedsProblemBack(t *testing.T) {
+	o := Observe(genWorld(t, 1), "e00")
+	bad := chatServer(t, 200, "I will build mines.", func(_ *http.Request, body map[string]any) {
+		if body["max_tokens"] != float64(DefaultMaxTokens) {
+			t.Errorf("max_tokens %v", body["max_tokens"])
+		}
+	})
+	defer bad.Close()
+	d, err := OpenAICompatible{Endpoint: bad.URL}.Decide(context.Background(), o)
+	var me *MalformedError
+	if !errors.As(err, &me) || me.Raw != "I will build mines." || d.Raw != "I will build mines." {
+		t.Fatalf("d=%+v err=%v", d, err)
+	}
+	fixed := chatServer(t, 200, `{"orders":[],"statement":"fixed"}`, func(_ *http.Request, body map[string]any) {
+		msgs, _ := body["messages"].([]any)
+		if len(msgs) != 4 || body["max_tokens"] != float64(77) {
+			t.Errorf("repair request %v", body)
+			return
+		}
+		prev, _ := msgs[2].(map[string]any)
+		again, _ := msgs[3].(map[string]any)
+		if prev["role"] != "assistant" || prev["content"] != "I will build mines." || !strings.Contains(again["content"].(string), "no JSON here") {
+			t.Errorf("repair conversation %v", msgs)
+		}
+	})
+	defer fixed.Close()
+	d, err = OpenAICompatible{Endpoint: fixed.URL, MaxTokens: 77, Model: "m"}.Repair(context.Background(), o, d, "no JSON here")
+	if err != nil || d.Statement != "fixed" || d.Raw == "" {
+		t.Fatalf("d=%+v err=%v", d, err)
+	}
+	if (OpenAICompatible{Model: "m"}).Name() != "openai-compatible:m" || (AutopilotAgent{}).Name() != "autopilot" {
+		t.Fatal("agent names")
+	}
+	if PromptHash(o) != PromptHash(Observe(genWorld(t, 1), "e00")) || PromptHash(o) == PromptHash(Observe(genWorld(t, 1), "e01")) {
+		t.Fatal("prompt hash")
 	}
 }

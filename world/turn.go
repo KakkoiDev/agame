@@ -311,11 +311,15 @@ func progressQueues(w *World) {
 		if e.Research == nil {
 			continue
 		}
-		pts := 0
+		pts, owned := 0, 0
 		for _, p := range w.Planets {
 			if p.OwnerID == e.ID {
 				pts += p.Buildings.ResearchLab
+				owned++
 			}
+		}
+		if owned == 0 { // research needs a planet; a planetless empire's queue waits
+			continue
 		}
 		e.Research.Progress += max(1, pts)
 		if e.Research.Progress >= e.Research.Required {

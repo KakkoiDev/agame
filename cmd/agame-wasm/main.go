@@ -3,12 +3,14 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"sort"
 	"syscall/js"
 
 	"github.com/KakkoiDev/agame/agent"
+	"github.com/KakkoiDev/agame/engine"
 	"github.com/KakkoiDev/agame/world"
 )
 
@@ -36,30 +38,33 @@ func newUniverse(_ js.Value, args []js.Value) any {
 	return encode(w)
 }
 
+// autoTurn plays one turn with every ruler on the deterministic autopilot,
+// through engine.Runner: the same code path as `agame run`.
 func autoTurn(_ js.Value, args []js.Value) any {
 	w, err := decodeWorld(args)
 	if err != nil {
 		return fail(err)
 	}
-	submitted := map[string][]world.Order{}
-	statements := map[string]string{}
+	agents := map[string]agent.Agent{}
 	for id := range w.Empires {
-		d := agent.Autopilot(w, id)
-		for i := range d.Orders {
-			d.Orders[i].EmpireID = id
-		}
-		submitted[id] = d.Orders
-		statements[id] = d.Statement
+		agents[id] = agent.AutopilotAgent{}
 	}
-	result, err := world.ResolveTurn(w, submitted)
+	r := &engine.Runner{World: w, Agents: agents, Budget: engine.Budget{TurnLimit: world.CanonicalTurnLimit}}
+	rec, err := r.Step(context.Background())
 	if err != nil {
 		return fail(err)
 	}
+	statements := map[string]string{}
+	for _, d := range rec.Decisions {
+		statements[d.Empire] = d.Statement
+	}
 	payload := struct {
-		World      *world.World      `json:"world"`
-		Result     world.TurnResult  `json:"result"`
-		Statements map[string]string `json:"statements"`
-	}{w, result, statements}
+		World      *world.World            `json:"world"`
+		Result     world.TurnResult        `json:"result"`
+		Statements map[string]string       `json:"statements"`
+		Decisions  []engine.DecisionRecord `json:"decisions"`
+		End        *world.End              `json:"end,omitempty"`
+	}{w, rec.Result, statements, rec.Decisions, rec.End}
 	return encode(payload)
 }
 
