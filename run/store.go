@@ -208,3 +208,49 @@ func (s Store) ReadJSONL(name string, f func([]byte) error) error {
 	}
 	return nil
 }
+
+// Tail returns up to the last n non-empty lines of name, oldest first,
+// reading backwards from the end so large logs stay cheap. A missing file
+// has no lines.
+func (s Store) Tail(name string, n int) ([][]byte, error) {
+	f, err := os.Open(filepath.Join(s.Dir, name))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	const block = 64 << 10
+	var buf []byte
+	pos := st.Size()
+	for pos > 0 && bytes.Count(bytes.TrimRight(buf, "\n"), []byte("\n")) < n {
+		size := int64(block)
+		if pos < size {
+			size = pos
+		}
+		pos -= size
+		chunk := make([]byte, size)
+		if _, err := f.ReadAt(chunk, pos); err != nil {
+			return nil, err
+		}
+		buf = append(chunk, buf...)
+	}
+	var lines [][]byte
+	for _, l := range bytes.Split(buf, []byte("\n")) {
+		if len(bytes.TrimSpace(l)) > 0 {
+			lines = append(lines, l)
+		}
+	}
+	if pos > 0 && len(lines) > 0 { // the first line may be cut
+		lines = lines[1:]
+	}
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return lines, nil
+}

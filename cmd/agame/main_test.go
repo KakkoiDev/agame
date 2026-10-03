@@ -247,3 +247,47 @@ func TestRunReplayAndResult(t *testing.T) {
 		t.Fatal("replay without a run")
 	}
 }
+
+func TestDashboardShowsDiplomacyBattlesAndRejections(t *testing.T) {
+	s := run.Store{Dir: t.TempDir()}
+	w, err := world.Generate(1, names)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Create(w, run.Header{}); err != nil {
+		t.Fatal(err)
+	}
+	h := w.Planets[w.Empires["e00"].HomeworldID]
+	target := w.Planets[w.Systems[h.SystemID].Planets[1]]
+	target.OwnerID = "e01"
+	w.Fleets["fa"] = &world.Fleet{ID: "fa", OwnerID: "e00", SystemID: h.SystemID, Ships: world.Ships{"cruiser": 4}}
+	res, err := world.ResolveTurn(w, map[string][]world.Order{
+		"e00": {{EmpireID: "e00", Type: "attack", Actor: "fa", Target: target.ID}},
+		"e02": {{EmpireID: "e02", Type: "alliance_create", Params: map[string]any{"name": "<b>Pact</b>", "invite": []any{"e03"}}}},
+		"e04": {{EmpireID: "e04", Type: "construct", Actor: "nowhere", Target: "metal_mine"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Commit(w, res); err != nil {
+		t.Fatal(err)
+	}
+	body := get(dashboard(s), "GET", "/").Body.String()
+	for _, want := range []string{"Standings", "&lt;b&gt;Pact&lt;/b&gt;", "Iona", "Cassian – Malrec", "captured", "battle", "alliance_created",
+		"Rejected orders (turn 0)", `construct nowhere metal_mine`, `unknown planet &#34;nowhere&#34;`, "Score"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("dashboard lacks %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "<b>Pact") {
+		t.Fatal("alliance name not escaped")
+	}
+	// An ended run says so.
+	w.Turn = world.CanonicalTurnLimit
+	if err := s.Save(w); err != nil {
+		t.Fatal(err)
+	}
+	if body := get(dashboard(s), "GET", "/").Body.String(); !strings.Contains(body, "Run ended at turn 600: turn_limit") {
+		t.Fatal("end not shown")
+	}
+}
