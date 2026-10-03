@@ -21,7 +21,7 @@ import (
 
 var names = []string{"Cassian", "Malrec", "Aya", "Kael", "Iona", "Talos", "Nara", "Orion"}
 
-const usage = "usage: agame [new [seed] | turn | run N | replay | observe EMPIRE TURN | serve]"
+const usage = "usage: agame [new [seed] | turn | run N | replay | observe EMPIRE TURN | suite SEED... | serve]"
 
 func main() {
 	flag.Parse()
@@ -83,6 +83,8 @@ func command(ctx context.Context, s run.Store, cmd string, args []string, out io
 		return err
 	case "replay":
 		return replay(s, out)
+	case "suite":
+		return suite(ctx, s, args, out)
 	case "observe":
 		if len(args) != 2 {
 			return fmt.Errorf("usage: agame observe EMPIRE TURN")
@@ -262,6 +264,52 @@ func replay(s run.Store, out io.Writer) error {
 		return fmt.Errorf("replayed %d turns to state %s, but %s has %s", len(turns), got, run.WorldFile, want)
 	}
 	fmt.Fprintf(out, "replayed %d turns and %d events; final state %s matches %s\n", len(turns), n, got, run.WorldFile)
+	return nil
+}
+
+// suite runs one complete benchmark per seed (spec/benchmark.md: "A
+// benchmark suite should run multiple universe seeds"), each in its own run
+// directory seed-N under the suite directory, to its end condition, and
+// prints every run's end and standings. Existing runs are resumed, never
+// overwritten.
+func suite(ctx context.Context, s run.Store, args []string, out io.Writer) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: agame suite SEED...")
+	}
+	limit := budget().TurnLimit
+	for _, a := range args {
+		seed, err := strconv.ParseInt(a, 10, 64)
+		if err != nil {
+			return fmt.Errorf("invalid seed %q", a)
+		}
+		rs := run.Store{Dir: filepath.Join(s.Dir, "seed-"+a)}
+		if _, err := os.Stat(filepath.Join(rs.Dir, run.WorldFile)); err != nil {
+			w, err := world.Generate(seed, names)
+			if err != nil {
+				return err
+			}
+			if err := rs.Create(w, run.Header{PromptVersion: agent.PromptVersion}); err != nil {
+				return err
+			}
+		}
+		w, err := rs.Load()
+		if err != nil {
+			return err
+		}
+		if world.CheckEnd(w, limit) == nil {
+			if _, err := play(ctx, rs, limit-w.Turn, io.Discard); err != nil {
+				return fmt.Errorf("seed %d: %w", seed, err)
+			}
+		}
+		var res Result
+		if err := rs.LoadJSON(run.ResultFile, &res); err != nil {
+			return fmt.Errorf("seed %d has no result: %w", seed, err)
+		}
+		fmt.Fprintf(out, "seed %d: ended at turn %d (%s)\n", seed, res.End.Turn, res.End.Reason)
+		for _, st := range res.Standings {
+			fmt.Fprintf(out, "  %d. %s (%s) %s planets=%d survived=%d score=%d\n", st.Rank, st.Name, st.Empire, st.Status, st.Planets, st.Survived, st.Score)
+		}
+	}
 	return nil
 }
 

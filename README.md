@@ -37,6 +37,7 @@ go run ./cmd/agame turn            # play one turn
 go run ./cmd/agame run 120         # play up to 120 turns, stopping at an end condition
 go run ./cmd/agame replay          # re-resolve the run from its log and verify every hash
 go run ./cmd/agame observe e03 40  # what ruler e03 saw at turn 40
+go run ./cmd/agame suite 1 2 3     # one full run per seed under ./run/seed-N, with standings
 go run ./cmd/agame serve           # observer dashboard
 ```
 

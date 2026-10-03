@@ -337,3 +337,30 @@ func TestDashboardDecisionsFilterAndObservation(t *testing.T) {
 		}
 	}
 }
+
+func TestSuiteRunsEverySeedToItsEnd(t *testing.T) {
+	s := run.Store{Dir: t.TempDir()}
+	t.Setenv("AGAME_TURN_LIMIT", "5")
+	var out strings.Builder
+	if err := command(context.Background(), s, "suite", []string{"3", "4"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"seed 3: ended at turn 5 (turn_limit)", "seed 4: ended at turn 5 (turn_limit)", "  1. "} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("suite output lacks %q:\n%s", want, out.String())
+		}
+	}
+	// Running it again resumes nothing and reports the same results.
+	var again strings.Builder
+	if err := command(context.Background(), s, "suite", []string{"3", "4"}, &again); err != nil || again.String() != out.String() {
+		t.Fatalf("rerun: %v\n%s", err, again.String())
+	}
+	if err := command(context.Background(), run.Store{Dir: filepath.Join(s.Dir, "seed-3")}, "replay", nil, &out); err != nil {
+		t.Fatal(err)
+	}
+	for _, bad := range [][]string{{}, {"x"}} {
+		if err := command(context.Background(), s, "suite", bad, &out); err == nil {
+			t.Fatalf("suite %v accepted", bad)
+		}
+	}
+}
