@@ -261,3 +261,16 @@ func TestTurnResultJSONUsesLowercaseKeys(t *testing.T) {
 		t.Fatalf("TurnResult JSON lacks \"events\": %s", b)
 	}
 }
+
+func TestCaptureRequiresSurvivingCombatShip(t *testing.T) {
+	w := newTestWorld(t, 3)
+	// An undefended colony owned by e01, adjacent to e00's fleet.
+	f := formFleet(t, w, map[string]int{"scout": 1})
+	target := w.Systems[f.SystemID].Planets[1]
+	w.Planets[target].OwnerID = "e01"
+	home(w, "e00").Resources.Deuterium = 1000
+	resolve(t, w, Order{EmpireID: "e00", Type: "attack", Actor: f.ID, Target: target})
+	if w.Planets[target].OwnerID != "e01" {
+		t.Fatal("a lone scout captured a planet; spec requires a surviving frigate or cruiser")
+	}
+}
