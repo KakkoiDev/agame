@@ -16,12 +16,10 @@ type OpenAICompatible struct {
 }
 
 func (a OpenAICompatible) Decide(ctx context.Context, o Observation) (Decision, error) {
-	obs, err := json.Marshal(o)
-	if err != nil {
-		return Decision{}, err
-	}
-	schema := `Return JSON only: {"orders":[],"statement":"..."}. Choose zero or more legal AGame orders. Never invent IDs.`
-	body := map[string]any{"model": a.Model, "temperature": 0.3, "messages": []map[string]string{{"role": "system", "content": schema}, {"role": "user", "content": string(obs)}}}
+	body := map[string]any{"model": a.Model, "temperature": 0.3, "messages": []map[string]string{
+		{"role": "system", "content": SystemPrompt(o)},
+		{"role": "user", "content": Prompt(o)},
+	}}
 	b, err := json.Marshal(body)
 	if err != nil {
 		return Decision{}, err

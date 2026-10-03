@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/KakkoiDev/agame/world"
 )
 
 func chatServer(t *testing.T, status int, content string, check func(*http.Request, map[string]any)) *httptest.Server {
@@ -124,5 +126,63 @@ func TestParseDecision(t *testing.T) {
 		if _, err := ParseDecision(bad); err == nil {
 			t.Errorf("%q parsed", bad)
 		}
+	}
+}
+
+func TestPromptIsCompactCompleteAndDeterministic(t *testing.T) {
+	w := genWorld(t, 3)
+	w.Fleets["f1"] = &world.Fleet{ID: "f1", OwnerID: "e00", SystemID: "s00", Ships: world.Ships{"scout": 1}}
+	w.Messages = []world.Message{{Turn: 0, From: "e01", To: "e00", Body: "peace?"}}
+	o := Observe(w, "e00")
+	sys, user := SystemPrompt(o), Prompt(o)
+	if sys != SystemPrompt(Observe(w, "e00")) || user != Prompt(Observe(w, "e00")) {
+		t.Fatal("prompt not deterministic")
+	}
+	for _, s := range world.OrderSpecs() {
+		if !strings.Contains(sys, "\n"+s.Type+": ") {
+			t.Fatalf("system prompt lacks order %s:\n%s", s.Type, sys)
+		}
+	}
+	h := w.Planets[w.Empires["e00"].HomeworldID]
+	hs := w.Systems[h.SystemID]
+	line := hs.ID + ": " + strings.Join(hs.Neighbors, " ") + " | "
+	for _, want := range []string{line, h.ID + "=e00*", `"ID":"f1"`, `"ID":"` + h.ID + `"`, "peace?", "-=unowned"} {
+		if !strings.Contains(user, want) {
+			t.Fatalf("prompt lacks %q:\n%s", want, user)
+		}
+	}
+	for _, s := range w.Systems {
+		if !strings.Contains(user, "\n"+s.ID+": ") {
+			t.Fatalf("graph line missing for %s", s.ID)
+		}
+	}
+	// Rough budget guard: ~4 chars/token, the 8k-token initial context
+	// must leave room for rules, identity and the Jikko tree.
+	if n := len(sys) + len(user); n > 12000 {
+		t.Fatalf("prompt is %d chars", n)
+	}
+	if Prompt(Observation{Turn: 2}) == "" {
+		t.Fatal("empty prompt for a missing empire")
+	}
+}
+
+func TestOpenAIRequestCarriesPrompt(t *testing.T) {
+	w := genWorld(t, 1)
+	o := Observe(w, "e00")
+	srv := chatServer(t, 200, `{"orders":[],"statement":"wait"}`, func(_ *http.Request, body map[string]any) {
+		msgs, _ := body["messages"].([]any)
+		if len(msgs) != 2 {
+			t.Errorf("messages %v", msgs)
+			return
+		}
+		sys, _ := msgs[0].(map[string]any)["content"].(string)
+		user, _ := msgs[1].(map[string]any)["content"].(string)
+		if sys != SystemPrompt(o) || user != Prompt(o) {
+			t.Errorf("request does not carry the rendered prompt")
+		}
+	})
+	defer srv.Close()
+	if _, err := (OpenAICompatible{Endpoint: srv.URL, Model: "m"}).Decide(context.Background(), o); err != nil {
+		t.Fatal(err)
 	}
 }

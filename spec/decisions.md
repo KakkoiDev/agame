@@ -146,6 +146,9 @@ Each completed browser turn stores the world snapshot plus the rulers' auditable
 ## D47 — Combat resolution details (refines D18)
 Each arriving attack fleet fights alone, in fleet-ID order. Defenders are the ships docked at the target planet plus the defender's fleets idle in that system. Each round every living ship, and each Defense Grid level as one battery of 20 power (Shields-scaled), hits one living enemy ship chosen by a battle RNG seeded from world seed + turn + planet + attacking fleet; damage is simultaneous and accumulates against Shields-scaled hull. Combat ends after 6 rounds, when the attacker is gone, or when the defender has no ships and no grid. A surviving attacker that does not capture retreats to its previous route node at no fuel cost, or stays if it attacked in place. Debris is 30% of destroyed metal/crystal cost, rounded down once per side per battle. Fleets left with zero ships are removed; a consumed Colony Ark's cargo stays on the new colony.
 
+## D48 — Observation visibility (until espionage reports feed observations)
+Every ruler sees the public hyperspace graph and every planet's id, system, slot, owner and homeworld flag. Its own planets and fleets are shown in full. Foreign fleets are seen only in systems where the ruler owns a planet or has a fleet, as owner plus a size band (1-4, 5-19, 20-49, 50+); debris is seen only in those systems. Foreign planet contents (resources, buildings, docked ships, queues) stay hidden and are learned through espionage. The observation also lists the legal order types with their field shapes.
+
 # Status
 
 **There are no unresolved v1 questions from the original pre-implementation list.**
