@@ -58,10 +58,11 @@ test("57 turns visibly evolve the strategic state",async({page})=>{
   for(let i=0;i<4;i++)await page.getByRole("button",{name:"Advance 1 year"}).click();
   for(let i=0;i<9;i++)await page.getByRole("button",{name:"Advance 1 month"}).click();
   await expect(page.locator("#turn")).toContainText("Turn 57",{timeout:30000});
+  // columns: rank, empire, planets, fleets, tech, …
   const rows=await page.locator("#empires tr").evaluateAll(rs=>rs.map(r=>Array.from(r.cells).map(c=>c.textContent)));
-  expect(rows.some(r=>Number(r[1])>1)).toBeTruthy();
-  expect(rows.some(r=>Number(r[2])>0)).toBeTruthy();
+  expect(rows.some(r=>Number(r[2])>1)).toBeTruthy();
   expect(rows.some(r=>Number(r[3])>0)).toBeTruthy();
+  expect(rows.some(r=>Number(r[4])>0)).toBeTruthy();
   await page.locator("summary").filter({hasText:"Last turn decisions"}).click();
   await expect(page.locator("#decisions")).not.toHaveText("");
 });
