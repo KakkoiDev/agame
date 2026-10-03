@@ -15,6 +15,7 @@ import (
 
 	"github.com/KakkoiDev/agame/agent"
 	"github.com/KakkoiDev/agame/engine"
+	"github.com/KakkoiDev/agame/jikko"
 	"github.com/KakkoiDev/agame/run"
 	"github.com/KakkoiDev/agame/world"
 )
@@ -58,7 +59,7 @@ func command(ctx context.Context, s run.Store, cmd string, args []string, out io
 		if err != nil {
 			return err
 		}
-		if err := s.Create(w, run.Header{PromptVersion: agent.PromptVersion}); err != nil {
+		if err := create(s, w); err != nil {
 			return err
 		}
 		fmt.Fprintln(out, s.Dir)
@@ -112,13 +113,32 @@ func command(ctx context.Context, s run.Store, cmd string, args []string, out io
 	return nil
 }
 
+// jikkoEnabled reports whether rulers get a Jikko store; AGAME_JIKKO=off
+// runs the "no persistent memory" ablation (spec/benchmark.md).
+func jikkoEnabled() bool { return os.Getenv("AGAME_JIKKO") != "off" }
+
+// create starts a run from S(0) and, unless Jikko is disabled, seeds its
+// Jikko store with the ruler identities and records the starting revision.
+func create(s run.Store, w *world.World) error {
+	h := run.Header{PromptVersion: agent.PromptVersion, JikkoRevision: -1}
+	if jikkoEnabled() {
+		m := jikko.NewMemory()
+		engine.SeedJikko(m, w)
+		if err := s.SaveJSON(run.JikkoFile, m); err != nil {
+			return err
+		}
+		h.JikkoRevision = m.Revision()
+	}
+	return s.Create(w, h)
+}
+
 // rulers picks the decision provider for every ruler: an OpenAI-compatible
 // local model when AGAME_MODEL_ENDPOINT is set, else the deterministic
 // autopilot. Every ruler shares the same provider (D6).
 func rulers(w *world.World) (map[string]agent.Agent, []run.RosterEntry) {
 	var a agent.Agent = agent.AutopilotAgent{}
 	if ep := os.Getenv("AGAME_MODEL_ENDPOINT"); ep != "" {
-		a = agent.OpenAICompatible{Endpoint: ep, APIKey: os.Getenv("AGAME_API_KEY"), Model: env("AGAME_MODEL", "local")}
+		a = agent.OpenAICompatible{Endpoint: ep, APIKey: os.Getenv("AGAME_API_KEY"), Model: env("AGAME_MODEL", "local"), NativeTools: os.Getenv("AGAME_TOOLS") == "native"}
 	}
 	m := map[string]agent.Agent{}
 	var roster []run.RosterEntry
@@ -154,6 +174,13 @@ func play(ctx context.Context, s run.Store, n int, out io.Writer) (*world.World,
 	}
 	agents, roster := rulers(w)
 	r := &engine.Runner{World: w, Agents: agents, Budget: budget()}
+	var mem *jikko.Memory
+	if jikkoEnabled() {
+		if mem, err = jikko.LoadMemory(filepath.Join(s.Dir, run.JikkoFile)); err != nil {
+			return w, fmt.Errorf("%s: %w", run.JikkoFile, err)
+		}
+		r.Jikko = mem
+	}
 	var h run.Header
 	if err := s.LoadJSON(run.HeaderFile, &h); err == nil {
 		h.Roster, h.Budget, h.PromptVersion = roster, r.Budget, agent.PromptVersion
@@ -176,6 +203,11 @@ func play(ctx context.Context, s run.Store, n int, out io.Writer) (*world.World,
 		}
 		if err := s.AppendJSONL(run.ReflectionsFile, reflections...); err != nil {
 			return w, err
+		}
+		if mem != nil { // cognition is saved with the turn, before world.json
+			if err := s.SaveJSON(run.JikkoFile, mem); err != nil {
+				return w, err
+			}
 		}
 		if err := s.Commit(w, rec.Result, decisions...); err != nil {
 			return w, err
@@ -288,7 +320,7 @@ func suite(ctx context.Context, s run.Store, args []string, out io.Writer) error
 			if err != nil {
 				return err
 			}
-			if err := rs.Create(w, run.Header{PromptVersion: agent.PromptVersion}); err != nil {
+			if err := create(rs, w); err != nil {
 				return err
 			}
 		}

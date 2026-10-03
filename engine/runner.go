@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/KakkoiDev/agame/agent"
+	"github.com/KakkoiDev/agame/jikko"
 	"github.com/KakkoiDev/agame/world"
 )
 
@@ -31,11 +32,13 @@ type Budget struct {
 	Repairs int `json:"repairs"`
 	// TurnLimit ends the run (D30); 0 means the canonical 600.
 	TurnLimit int `json:"turn_limit"`
+	// Tools are the Jikko tool and context limits; zero means canonical.
+	Tools agent.ToolBudget `json:"tools"`
 }
 
 // CanonicalBudget is the canonical small-model benchmark budget.
 func CanonicalBudget() Budget {
-	return Budget{Timeout: 5 * time.Minute, Repairs: DefaultRepairs, TurnLimit: world.CanonicalTurnLimit}
+	return Budget{Timeout: 5 * time.Minute, Repairs: DefaultRepairs, TurnLimit: world.CanonicalTurnLimit, Tools: agent.CanonicalToolBudget()}
 }
 
 // Attempt is one model invocation within a decision.
@@ -65,6 +68,9 @@ type DecisionRecord struct {
 	// with zero orders because of an agent failure.
 	Failure   string `json:"failure,omitempty"`
 	LatencyMS int64  `json:"latency_ms"`
+	// Jikko is what the ruler retrieved and wrote through its tools: the
+	// tree revision it saw, files read with revisions, writes and budgets.
+	Jikko *agent.ToolUsage `json:"jikko,omitempty"`
 }
 
 // TurnRecord is everything one turn produced.
@@ -87,6 +93,11 @@ type Ops struct {
 	Orders     int   `json:"orders"`
 	Rejected   int   `json:"rejected_orders"`
 	LatencyMS  int64 `json:"latency_ms"`
+	ToolRounds int   `json:"tool_rounds"`
+	FilesRead  int   `json:"files_read"`
+	Writes     int   `json:"jikko_writes"`
+	InputTok   int   `json:"input_tokens"`
+	OutputTok  int   `json:"output_tokens"`
 }
 
 // Add accumulates one decision record.
@@ -110,6 +121,17 @@ func (o *Ops) Add(d DecisionRecord) {
 	o.Orders += len(d.Orders)
 	o.Rejected += len(d.Rejected)
 	o.LatencyMS += d.LatencyMS
+	if u := d.Jikko; u != nil {
+		o.ToolRounds += u.Rounds
+		o.FilesRead += u.FilesReturned
+		o.InputTok += u.InputTokens
+		o.OutputTok += u.OutputTokens
+		for _, w := range u.Writes {
+			if w.Error == "" {
+				o.Writes++
+			}
+		}
+	}
 }
 
 type Runner struct {
@@ -119,6 +141,10 @@ type Runner struct {
 	// Now is the clock used for latency; nil means time.Now. Latency is the
 	// only nondeterministic field of a record and never affects the world.
 	Now func() time.Time
+	// Jikko is the rulers' cognition store. When set, agents that can use
+	// tools decide through a budgeted tool session on it; nil runs without
+	// Jikko.
+	Jikko jikko.Store
 }
 
 // Turn plays one turn and returns the engine result.
@@ -144,15 +170,23 @@ func (r *Runner) Step(ctx context.Context) (TurnRecord, error) {
 		}
 	}
 	sort.Strings(ids)
+	r.syncJikko()
 	submitted := map[string][]world.Order{}
+	var sessions []*agent.Tools
 	for _, id := range ids {
 		a := r.Agents[id]
 		if a == nil {
 			continue
 		}
-		d := r.decide(ctx, a, id, len(rec.Decisions))
+		d, tools := r.decide(ctx, a, id, len(rec.Decisions))
 		submitted[id] = d.Orders
 		rec.Decisions = append(rec.Decisions, d)
+		sessions = append(sessions, tools)
+	}
+	// The decision barrier is closed: commit every ruler's staged Jikko
+	// writes, in empire-ID order (D68).
+	for i, t := range sessions {
+		rec.Decisions[i].Jikko = r.commit(t, w.Turn)
 	}
 	before := fleetValues(w)
 	res, err := world.ResolveTurn(w, submitted)
@@ -189,10 +223,32 @@ func (r *Runner) now() time.Time {
 // still malformed, or that failed or timed out, submits zero orders; a
 // well-formed decision is submitted as is and the engine rejects its invalid
 // orders with reasons.
-func (r *Runner) decide(ctx context.Context, a agent.Agent, id string, invocation int) DecisionRecord {
+func (r *Runner) decide(ctx context.Context, a agent.Agent, id string, invocation int) (DecisionRecord, *agent.Tools) {
 	w := r.World
 	obs := agent.Observe(w, id)
 	rec := DecisionRecord{Turn: w.Turn, Invocation: invocation, Empire: id, Agent: agentName(a), PromptHash: agent.PromptHash(obs), Messages: len(obs.Messages)}
+	var tools *agent.Tools
+	td, useTools := a.(agent.ToolDecider)
+	if useTools = useTools && r.Jikko != nil; useTools {
+		tools = agent.NewTools(r.Jikko, obs, r.Budget.Tools, false)
+		defer tools.Close()
+	}
+	first := func(ctx context.Context) (agent.Decision, error) {
+		if useTools {
+			return td.DecideTools(ctx, obs, tools)
+		}
+		return a.Decide(ctx, obs)
+	}
+	var repair func(context.Context, agent.Decision, string) (agent.Decision, error)
+	if tr, ok := a.(agent.ToolRepairer); ok && useTools {
+		repair = func(ctx context.Context, prev agent.Decision, problem string) (agent.Decision, error) {
+			return tr.RepairTools(ctx, obs, tools, prev, problem)
+		}
+	} else if rep, ok := a.(agent.Repairer); ok {
+		repair = func(ctx context.Context, prev agent.Decision, problem string) (agent.Decision, error) {
+			return rep.Repair(ctx, obs, prev, problem)
+		}
+	}
 	if r.Budget.Timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, r.Budget.Timeout)
@@ -200,7 +256,7 @@ func (r *Runner) decide(ctx context.Context, a agent.Agent, id string, invocatio
 	}
 	start := r.now()
 
-	d, err := call(ctx, func(ctx context.Context) (agent.Decision, error) { return a.Decide(ctx, obs) })
+	d, err := call(ctx, first)
 	for attempt := 0; ; attempt++ {
 		at := Attempt{Raw: d.Raw}
 		var malformed *agent.MalformedError
@@ -218,14 +274,13 @@ func (r *Runner) decide(ctx context.Context, a agent.Agent, id string, invocatio
 		}
 		at.Problem = problem
 		rec.Attempts = append(rec.Attempts, at)
-		rep, canRepair := a.(agent.Repairer)
-		if problem == "" || !canRepair || attempt >= r.Budget.Repairs || ctx.Err() != nil {
+		if problem == "" || repair == nil || attempt >= r.Budget.Repairs || ctx.Err() != nil {
 			break
 		}
 		rec.Repairs++
 		prev := d
 		prev.Raw = at.Raw
-		d, err = call(ctx, func(ctx context.Context) (agent.Decision, error) { return rep.Repair(ctx, obs, prev, problem) })
+		d, err = call(ctx, func(ctx context.Context) (agent.Decision, error) { return repair(ctx, prev, problem) })
 	}
 	switch {
 	case err == nil:
@@ -241,7 +296,49 @@ func (r *Runner) decide(ctx context.Context, a agent.Agent, id string, invocatio
 		rec.Orders = []world.Order{}
 	}
 	rec.LatencyMS = r.now().Sub(start).Milliseconds()
-	return rec
+	return rec, tools
+}
+
+// syncJikko brings the store's identities up to date with S(t): every
+// empire has a ruler Identity with its personality seed, and every alliance
+// is a group Identity whose members are the alliance's members (D65).
+func (r *Runner) syncJikko() {
+	if r.Jikko == nil {
+		return
+	}
+	SeedJikko(r.Jikko, r.World)
+}
+
+// SeedJikko creates the ruler Identities with their personality documents
+// and syncs alliance groups from w.
+func SeedJikko(s jikko.Store, w *world.World) {
+	ids := make([]string, 0, len(w.Empires))
+	for id := range w.Empires {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for i, id := range ids {
+		s.EnsureRuler(id, w.Empires[id].Name, jikko.Persona(i, w.Empires[id].Name))
+	}
+	groups := map[string][]string{}
+	for id, a := range w.Alliances {
+		groups[id] = append([]string(nil), a.Members...)
+	}
+	s.SyncGroups(groups)
+}
+
+// commit closes a tool session and commits its staged writes as one Jikko
+// transaction, returning the session's audit record.
+func (r *Runner) commit(t *agent.Tools, turn int) *agent.ToolUsage {
+	if t == nil {
+		return nil
+	}
+	t.Close()
+	if st := t.Staged(); len(st) > 0 {
+		t.SetWrites(r.Jikko.Apply(t.Identity(), turn, st))
+	}
+	u := t.Usage()
+	return &u
 }
 
 // call runs one agent invocation but stops waiting when ctx is done, so a

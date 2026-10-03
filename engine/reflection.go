@@ -33,6 +33,8 @@ type ReflectionRecord struct {
 	Note      string `json:"note,omitempty"`
 	Error     string `json:"error,omitempty"`
 	LatencyMS int64  `json:"latency_ms"`
+	// Jikko records the reflection's tool use and memory writes.
+	Jikko *agent.ToolUsage `json:"jikko,omitempty"`
 }
 
 // fleetValues is each empire's total ship value (docked and in fleets).
@@ -124,10 +126,16 @@ func (r *Runner) reflect(ctx context.Context, triggers map[string][]string) []Re
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
+	r.syncJikko()
+	var sessions []*agent.Tools
 	for _, id := range ids {
 		rec := ReflectionRecord{Turn: r.World.Turn, Empire: id, Triggers: triggers[id]}
-		ref, ok := r.Agents[id].(agent.Reflector)
-		if ok {
+		a := r.Agents[id]
+		tref, useTools := a.(agent.ToolReflector)
+		useTools = useTools && r.Jikko != nil
+		ref, plain := a.(agent.Reflector)
+		var tools *agent.Tools
+		if useTools || plain {
 			rec.Offered = true
 			rctx, cancel := ctx, context.CancelFunc(func() {})
 			if r.Budget.Timeout > 0 {
@@ -135,11 +143,23 @@ func (r *Runner) reflect(ctx context.Context, triggers map[string][]string) []Re
 			}
 			start := r.now()
 			o := agent.Observe(r.World, id)
+			if useTools {
+				tools = agent.NewTools(r.Jikko, o, r.Budget.Tools, true)
+			}
 			d, err := call(rctx, func(ctx context.Context) (agent.Decision, error) {
-				note, err := ref.Reflect(ctx, o, rec.Triggers)
+				var note string
+				var err error
+				if useTools {
+					note, err = tref.ReflectTools(ctx, o, tools, rec.Triggers)
+				} else {
+					note, err = ref.Reflect(ctx, o, rec.Triggers)
+				}
 				return agent.Decision{Statement: note}, err
 			})
 			cancel()
+			if tools != nil {
+				tools.Close()
+			}
 			rec.Note = d.Statement
 			if err != nil {
 				rec.Error = err.Error()
@@ -147,6 +167,11 @@ func (r *Runner) reflect(ctx context.Context, triggers map[string][]string) []Re
 			rec.LatencyMS = r.now().Sub(start).Milliseconds()
 		}
 		out = append(out, rec)
+		sessions = append(sessions, tools)
+	}
+	// Reflections are simultaneous too: writes commit after all of them.
+	for i, t := range sessions {
+		out[i].Jikko = r.commit(t, r.World.Turn)
 	}
 	return out
 }

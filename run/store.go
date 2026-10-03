@@ -8,6 +8,7 @@
 //	events.jsonl    the append-only event log
 //	decisions.jsonl one decision record per ruler and turn
 //	reflections.jsonl one record per reflection phase offered
+//	jikko.json      the rulers' Jikko store (identities, documents, history)
 //	result.json     end condition and final standings, once the run ends
 package run
 
@@ -33,6 +34,7 @@ const (
 	DecisionsFile   = "decisions.jsonl"
 	ReflectionsFile = "reflections.jsonl"
 	ResultFile      = "result.json"
+	JikkoFile       = "jikko.json"
 )
 
 type Store struct{ Dir string }
@@ -54,6 +56,9 @@ type Header struct {
 	InitialHash   string        `json:"initial_hash"`
 	Roster        []RosterEntry `json:"roster,omitempty"`
 	Budget        any           `json:"budget,omitempty"`
+	// JikkoRevision is the Jikko store revision the run started from; -1
+	// when the run has no Jikko store.
+	JikkoRevision int `json:"jikko_start_revision"`
 }
 
 // Save replaces world.json atomically (temp file + rename) so a crash never leaves a truncated, half-written turn.

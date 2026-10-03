@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,7 +15,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/KakkoiDev/agame/agent"
 	"github.com/KakkoiDev/agame/engine"
+	"github.com/KakkoiDev/agame/jikko"
 	"github.com/KakkoiDev/agame/run"
 	"github.com/KakkoiDev/agame/world"
 )
@@ -223,7 +226,7 @@ func TestRunReplayAndResult(t *testing.T) {
 	if err := s.ReadJSONL(run.ReflectionsFile, func(b []byte) error {
 		var r engine.ReflectionRecord
 		n++
-		if err := json.Unmarshal(b, &r); err != nil || len(r.Triggers) == 0 || r.Offered {
+		if err := json.Unmarshal(b, &r); err != nil || len(r.Triggers) == 0 || !r.Offered || r.Jikko == nil || r.Jikko.Rounds > agent.ReflectionRounds {
 			return fmt.Errorf("reflection %s", b)
 		}
 		return nil
@@ -259,6 +262,45 @@ func TestRunReplayAndResult(t *testing.T) {
 	}
 	if err := command(ctx, run.Store{Dir: t.TempDir()}, "replay", nil, &out); err == nil {
 		t.Fatal("replay without a run")
+	}
+	// The rulers' Jikko memory persisted across the separate run commands.
+	mem, err := jikko.LoadMemory(filepath.Join(s.Dir, run.JikkoFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, ok := mem.Read("e03", "rulers/e03/plan.md")
+	if !ok || plan.Revision < 2 || !strings.Contains(plan.Content, "Turn 5:") {
+		t.Fatalf("plan %+v", plan)
+	}
+	if _, ok := mem.Read("e03", "rulers/e00/plan.md"); ok {
+		t.Fatal("a ruler reads another ruler's plan")
+	}
+	if err := s.LoadJSON(run.HeaderFile, &h); err != nil || h.JikkoRevision != 8 {
+		t.Fatalf("jikko start revision %d", h.JikkoRevision)
+	}
+	var d engine.DecisionRecord
+	lines, _ := s.Tail(run.DecisionsFile, 1)
+	if err := json.Unmarshal(lines[0], &d); err != nil || d.Jikko == nil || d.Jikko.TreeRevision == 0 || len(d.Jikko.FilesRead) == 0 || d.Jikko.Identity != d.Empire {
+		t.Fatalf("decision jikko record %+v", d.Jikko)
+	}
+}
+
+func TestJikkoCanBeDisabled(t *testing.T) {
+	t.Setenv("AGAME_JIKKO", "off")
+	s := run.Store{Dir: t.TempDir()}
+	ctx := context.Background()
+	if err := command(ctx, s, "new", []string{"3"}, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if err := command(ctx, s, "run", []string{"2"}, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(s.Dir, run.JikkoFile)); !os.IsNotExist(err) {
+		t.Fatalf("jikko.json written with Jikko off: %v", err)
+	}
+	var h run.Header
+	if err := s.LoadJSON(run.HeaderFile, &h); err != nil || h.JikkoRevision != -1 {
+		t.Fatalf("header %+v", h)
 	}
 }
 

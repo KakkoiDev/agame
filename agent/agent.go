@@ -95,6 +95,9 @@ type Decision struct {
 	Statement string        `json:"statement"`
 	// Raw is the model's unparsed output, kept for the decision record.
 	Raw string `json:"-"`
+	// Transcript is the conversation that produced the decision, so a
+	// tool-using agent can be repaired in context. It is not recorded.
+	Transcript []map[string]any `json:"-"`
 }
 type Agent interface {
 	Decide(context.Context, Observation) (Decision, error)
@@ -113,6 +116,25 @@ type Repairer interface {
 // concise note for the record. It cannot submit orders.
 type Reflector interface {
 	Reflect(ctx context.Context, o Observation, triggers []string) (string, error)
+}
+
+// ToolDecider is an Agent that inspects its Jikko memory through a tool
+// session before deciding (spec/agents.md, Agent contract: observe ->
+// inspect -> decide). The harness uses it whenever a Jikko store is
+// attached to the run.
+type ToolDecider interface {
+	DecideTools(ctx context.Context, o Observation, t *Tools) (Decision, error)
+}
+
+// ToolRepairer repairs a decision within the same tool session.
+type ToolRepairer interface {
+	RepairTools(ctx context.Context, o Observation, t *Tools, prev Decision, problem string) (Decision, error)
+}
+
+// ToolReflector reflects with a reflection-budget tool session and may write
+// durable memory through it.
+type ToolReflector interface {
+	ReflectTools(ctx context.Context, o Observation, t *Tools, triggers []string) (string, error)
 }
 
 // Configured is an Agent that can describe its inference configuration for

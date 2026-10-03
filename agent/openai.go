@@ -16,13 +16,16 @@ type OpenAICompatible struct {
 	// MaxTokens caps the decision output; 0 means the canonical 2,000
 	// (spec/agents.md, Small-model budgets).
 	MaxTokens int
+	// NativeTools offers the Jikko and game tools as OpenAI function tools
+	// instead of the JSON action protocol (D69). Both drive the same loop.
+	NativeTools bool
 }
 
 // DefaultMaxTokens is the canonical final-decision output budget.
 const DefaultMaxTokens = 2000
 
 func (a OpenAICompatible) Decide(ctx context.Context, o Observation) (Decision, error) {
-	return a.complete(ctx, []map[string]string{
+	return a.complete(ctx, []map[string]any{
 		{"role": "system", "content": SystemPrompt(o)},
 		{"role": "user", "content": Prompt(o)},
 	})
@@ -36,7 +39,7 @@ func (a OpenAICompatible) Repair(ctx context.Context, o Observation, prev Decisi
 		b, _ := json.Marshal(prev)
 		raw = string(b)
 	}
-	return a.complete(ctx, []map[string]string{
+	return a.complete(ctx, []map[string]any{
 		{"role": "system", "content": SystemPrompt(o)},
 		{"role": "user", "content": Prompt(o)},
 		{"role": "assistant", "content": raw},
@@ -54,7 +57,7 @@ const ReflectionMaxTokens = 400
 // that triggered reflection. The answer is free text; no orders are read.
 func (a OpenAICompatible) Reflect(ctx context.Context, o Observation, triggers []string) (string, error) {
 	a.MaxTokens = ReflectionMaxTokens
-	content, err := a.chat(ctx, []map[string]string{
+	content, err := a.chat(ctx, []map[string]any{
 		{"role": "system", "content": ReflectionPrompt(triggers)},
 		{"role": "user", "content": Prompt(o)},
 	})
@@ -74,7 +77,11 @@ func (a OpenAICompatible) Config() map[string]any {
 	if mt <= 0 {
 		mt = DefaultMaxTokens
 	}
-	return map[string]any{"model": a.Model, "temperature": Temperature, "max_tokens": mt, "reflection_max_tokens": ReflectionMaxTokens, "prompt_version": PromptVersion}
+	protocol := "json"
+	if a.NativeTools {
+		protocol = "native"
+	}
+	return map[string]any{"model": a.Model, "temperature": Temperature, "max_tokens": mt, "reflection_max_tokens": ReflectionMaxTokens, "prompt_version": PromptVersion, "tool_protocol": protocol}
 }
 
 // RepairPrompt is the message that feeds a validation problem back.
@@ -82,7 +89,7 @@ func RepairPrompt(problem string) string {
 	return "Your previous answer could not be used: " + problem + "\nReply again with the corrected JSON decision only."
 }
 
-func (a OpenAICompatible) complete(ctx context.Context, messages []map[string]string) (Decision, error) {
+func (a OpenAICompatible) complete(ctx context.Context, messages []map[string]any) (Decision, error) {
 	content, err := a.chat(ctx, messages)
 	if err != nil {
 		return Decision{}, err
@@ -96,20 +103,54 @@ func (a OpenAICompatible) complete(ctx context.Context, messages []map[string]st
 }
 
 // chat sends one chat-completion request and returns the reply text.
-func (a OpenAICompatible) chat(ctx context.Context, messages []map[string]string) (string, error) {
+func (a OpenAICompatible) chat(ctx context.Context, messages []map[string]any) (string, error) {
+	r, err := a.send(ctx, messages, nil)
+	return r.Content, err
+}
+
+// nativeCall is one OpenAI tool call in a reply.
+type nativeCall struct {
+	ID       string `json:"id"`
+	Type     string `json:"type"`
+	Function struct {
+		Name      string `json:"name"`
+		Arguments string `json:"arguments"`
+	} `json:"function"`
+}
+
+// chatReply is one assistant reply.
+type chatReply struct {
+	Content   string
+	ToolCalls []nativeCall
+}
+
+// message is the reply as a conversation message, to send back next round.
+func (r chatReply) message() map[string]any {
+	m := map[string]any{"role": "assistant", "content": r.Content}
+	if len(r.ToolCalls) > 0 {
+		m["tool_calls"] = r.ToolCalls
+	}
+	return m
+}
+
+// send posts one chat-completion request, offering tools when given.
+func (a OpenAICompatible) send(ctx context.Context, messages []map[string]any, tools []any) (chatReply, error) {
 	maxTokens := a.MaxTokens
 	if maxTokens <= 0 {
 		maxTokens = DefaultMaxTokens
 	}
 	body := map[string]any{"model": a.Model, "temperature": Temperature, "max_tokens": maxTokens, "messages": messages}
+	if len(tools) > 0 {
+		body["tools"] = tools
+	}
 	b, err := json.Marshal(body)
 	if err != nil {
-		return "", err
+		return chatReply{}, err
 	}
 	url := strings.TrimRight(a.Endpoint, "/") + "/v1/chat/completions"
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(b))
 	if err != nil {
-		return "", fmt.Errorf("model request: %w", err)
+		return chatReply{}, fmt.Errorf("model request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if a.APIKey != "" {
@@ -121,23 +162,29 @@ func (a OpenAICompatible) chat(ctx context.Context, messages []map[string]string
 	}
 	resp, err := c.Do(req)
 	if err != nil {
-		return "", err
+		return chatReply{}, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode/100 != 2 {
-		return "", fmt.Errorf("model HTTP %s", resp.Status)
+		return chatReply{}, fmt.Errorf("model HTTP %s", resp.Status)
 	}
 	var out struct {
 		Choices []struct {
 			Message struct {
-				Content string `json:"content"`
+				Content   *string      `json:"content"`
+				ToolCalls []nativeCall `json:"tool_calls"`
 			} `json:"message"`
 		} `json:"choices"`
 	}
 	if err = json.NewDecoder(io.LimitReader(resp.Body, maxModelResponse)).Decode(&out); err != nil || len(out.Choices) == 0 {
-		return "", fmt.Errorf("invalid model response")
+		return chatReply{}, fmt.Errorf("invalid model response")
 	}
-	return out.Choices[0].Message.Content, nil
+	m := out.Choices[0].Message
+	r := chatReply{ToolCalls: m.ToolCalls}
+	if m.Content != nil {
+		r.Content = *m.Content
+	}
+	return r, nil
 }
 
 const maxModelResponse = 8 << 20
