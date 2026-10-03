@@ -51,7 +51,7 @@ func spy(w *World,f *Fleet){p:=w.Planets[f.Target];if p==nil{return};delta:=w.Em
 func recycle(w *World,f *Fleet){s:=w.Systems[f.SystemID];cap:=0;for k,n:=range f.Ships{cap+=ShipSpecs[k].Cargo*n};take:=min(cap,s.Debris.Metal+s.Debris.Crystal);m:=min(take,s.Debris.Metal);f.Cargo.Metal+=m;s.Debris.Metal-=m;take-=m;c:=min(take,s.Debris.Crystal);f.Cargo.Crystal+=c;s.Debris.Crystal-=c}
 func updateSovereignty(w *World){for _,e:=range w.Empires{if planetCount(w,e.ID)>0{e.Exile=false;e.Eliminated=false;continue};viable:=false;for _,f:=range w.Fleets{if f.OwnerID==e.ID&&f.Ships["colony_ark"]>0{viable=true}};e.Exile=viable;e.Eliminated=!viable}}
 func planetCount(w *World,e string)int{n:=0;for _,p:=range w.Planets{if p.OwnerID==e{n++}};return n}
-func ownedPlanetAt(w *World,e,s string)*Planet{for _,p:=range w.Planets{if p.OwnerID==e&&p.SystemID==s{return p}};return nil}
+func ownedPlanetAt(w *World,e,s string)*Planet{sys:=w.Systems[s];if sys==nil{return nil};for _,id:=range sys.Planets{if p:=w.Planets[id];p!=nil&&p.OwnerID==e{return p}};return nil} // slot order, not map order: the paying planet must be deterministic
 func fleetIDs(w *World)[]string{a:=make([]string,0,len(w.Fleets));for id:=range w.Fleets{a=append(a,id)};sort.Strings(a);return a}
 func intParam(o Order,k string,d int)int{if v,ok:=o.Params[k].(float64);ok{return int(v)};if v,ok:=o.Params[k].(int);ok{return v};return d}
 func stringParam(o Order,k string)string{v,_:=o.Params[k].(string);return v}

@@ -274,3 +274,21 @@ func TestCaptureRequiresSurvivingCombatShip(t *testing.T) {
 		t.Fatal("a lone scout captured a planet; spec requires a surviving frigate or cruiser")
 	}
 }
+
+func TestLaunchSourcePlanetIsDeterministic(t *testing.T) {
+	// With two owned planets in one system, the planet paying fuel was picked
+	// by map iteration order, so the same orders randomly succeeded or failed.
+	for i := 0; i < 40; i++ {
+		w := newTestWorld(t, 1)
+		p := home(w, "e00")
+		f := formFleet(t, w, map[string]int{"frigate": 2})
+		sys := w.Systems[p.SystemID]
+		for _, id := range sys.Planets[1:] {
+			w.Planets[id].OwnerID = "e00" // empty colonies, no deuterium
+		}
+		r := resolve(t, w, Order{EmpireID: "e00", Type: "move", Actor: f.ID, Target: sys.Neighbors[0]})
+		if len(r.Accepted) != 1 {
+			t.Fatalf("iteration %d: move rejected; fuel was charged to an empty colony", i)
+		}
+	}
+}
