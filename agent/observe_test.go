@@ -79,3 +79,137 @@ func TestObserveDeliversOnlyOwnDueMessages(t *testing.T) {
 		t.Fatal("unknown empire observed something")
 	}
 }
+
+func TestObserveExposesPublicGraphAndPlanets(t *testing.T) {
+	w := genWorld(t, 3)
+	o := Observe(w, "e00")
+	if len(o.Systems) != len(w.Systems) {
+		t.Fatalf("systems=%d", len(o.Systems))
+	}
+	for i, s := range o.Systems {
+		if i > 0 && o.Systems[i-1].ID >= s.ID {
+			t.Fatal("systems not sorted")
+		}
+		ws := w.Systems[s.ID]
+		if !reflect.DeepEqual(s.Neighbors, ws.Neighbors) || !reflect.DeepEqual(s.Planets, ws.Planets) {
+			t.Fatalf("system %s: %+v vs %+v", s.ID, s, ws)
+		}
+		if s.Debris != nil {
+			t.Fatalf("debris on %s at start", s.ID)
+		}
+	}
+	if len(o.Planets)+len(o.OtherPlanets) != len(w.Planets) {
+		t.Fatalf("planets %d + %d != %d", len(o.Planets), len(o.OtherPlanets), len(w.Planets))
+	}
+	homes := 0
+	for _, p := range o.OtherPlanets {
+		if p.OwnerID == "e00" || p.OwnerID != w.Planets[p.ID].OwnerID || p.SystemID != w.Planets[p.ID].SystemID {
+			t.Fatalf("planet view %+v", p)
+		}
+		if p.Homeworld {
+			homes++
+		}
+	}
+	if homes != 7 {
+		t.Fatalf("foreign homeworlds visible=%d, want 7", homes)
+	}
+	if len(o.Orders) == 0 {
+		t.Fatal("no legal order types")
+	}
+}
+
+func TestObserveForeignFleetsAndDebrisNeedPresence(t *testing.T) {
+	w := genWorld(t, 3)
+	h := w.Planets[w.Empires["e00"].HomeworldID]
+	other := w.Planets[w.Empires["e01"].HomeworldID]
+	remote := w.Planets[w.Empires["e02"].HomeworldID].SystemID
+	w.Fleets["f1"] = &world.Fleet{ID: "f1", OwnerID: "e01", SystemID: h.SystemID, Ships: world.Ships{"frigate": 7}}
+	w.Fleets["f2"] = &world.Fleet{ID: "f2", OwnerID: "e01", SystemID: other.SystemID, Ships: world.Ships{"frigate": 1}}
+	w.Fleets["f3"] = &world.Fleet{ID: "f3", OwnerID: "e02", SystemID: remote, Ships: world.Ships{"cruiser": 60}}
+	w.Fleets["f4"] = &world.Fleet{ID: "f4", OwnerID: "e00", SystemID: remote, Ships: world.Ships{"scout": 1}}
+	w.Systems[h.SystemID].Debris = world.Resources{Metal: 30}
+	w.Systems[other.SystemID].Debris = world.Resources{Metal: 99}
+	o := Observe(w, "e00")
+	want := []FleetSighting{
+		{ID: "f1", OwnerID: "e01", SystemID: h.SystemID, Size: "5-19"},
+		{ID: "f3", OwnerID: "e02", SystemID: remote, Size: "50+"},
+	}
+	if !reflect.DeepEqual(o.ForeignFleets, want) {
+		t.Fatalf("foreign fleets %+v want %+v", o.ForeignFleets, want)
+	}
+	for _, s := range o.Systems {
+		switch s.ID {
+		case h.SystemID:
+			if s.Debris == nil || s.Debris.Metal != 30 {
+				t.Fatalf("own-system debris %+v", s.Debris)
+			}
+		case other.SystemID:
+			if s.Debris != nil {
+				t.Fatal("debris visible without presence")
+			}
+		}
+	}
+	for _, f := range o.Fleets {
+		if f.OwnerID != "e00" {
+			t.Fatal("foreign fleet in own fleets")
+		}
+	}
+}
+
+func TestObserveGraphIsADeepCopy(t *testing.T) {
+	w := genWorld(t, 3)
+	w.Systems["s00"].Debris = world.Resources{Metal: 5}
+	w.Fleets["f1"] = &world.Fleet{ID: "f1", OwnerID: "e00", SystemID: "s00", Ships: world.Ships{"scout": 1}}
+	o := Observe(w, "e00")
+	before := append([]string(nil), w.Systems["s00"].Neighbors...)
+	o.Systems[0].Neighbors[0] = "hacked"
+	o.Systems[0].Planets[0] = "hacked"
+	o.Systems[0].Debris.Metal = 1 << 20
+	o.Orders[0].Type = "hacked"
+	if !reflect.DeepEqual(w.Systems["s00"].Neighbors, before) || w.Systems["s00"].Planets[0] == "hacked" || w.Systems["s00"].Debris.Metal != 5 {
+		t.Fatal("observation aliases the world graph")
+	}
+	if Observe(w, "e00").Orders[0].Type == "hacked" {
+		t.Fatal("order specs are shared between observations")
+	}
+}
+
+// TestObservationSuffices builds move and attack orders using only the
+// observation and checks the engine accepts them.
+func TestObservationSufficesForMoveAndAttack(t *testing.T) {
+	w := genWorld(t, 3)
+	w.Planets[w.Empires["e00"].HomeworldID].Resources.Deuterium = 5000
+	form := Observe(w, "e00")
+	home := form.Planets[0]
+	if _, err := world.ResolveTurn(w, map[string][]world.Order{"e00": {{EmpireID: "e00", Type: world.OrderFormFleet, Actor: home.ID,
+		Params: map[string]any{"ships": map[string]any{"frigate": float64(1)}}}, {EmpireID: "e00", Type: world.OrderFormFleet, Actor: home.ID,
+		Params: map[string]any{"ships": map[string]any{"frigate": float64(1)}}}}}); err != nil {
+		t.Fatal(err)
+	}
+	o := Observe(w, "e00")
+	if len(o.Fleets) != 2 {
+		t.Fatalf("fleets=%+v", o.Fleets)
+	}
+	var neighbor, enemy string
+	for _, s := range o.Systems {
+		if s.ID == o.Fleets[0].SystemID {
+			neighbor = s.Neighbors[0]
+		}
+	}
+	for _, p := range o.OtherPlanets {
+		if p.OwnerID != "" {
+			enemy = p.ID
+			break
+		}
+	}
+	res, err := world.ResolveTurn(w, map[string][]world.Order{"e00": {
+		{EmpireID: "e00", Type: world.OrderMove, Actor: o.Fleets[0].ID, Target: neighbor},
+		{EmpireID: "e00", Type: world.OrderAttack, Actor: o.Fleets[1].ID, Target: enemy},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Accepted) != 2 {
+		t.Fatalf("rejected=%+v", res.Rejected)
+	}
+}
